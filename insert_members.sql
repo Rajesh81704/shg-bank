@@ -1,0 +1,27 @@
+-- Insert all members
+INSERT INTO users (phone, name, password, is_admin, join_date, is_active) VALUES
+('9990173980', 'Raju', '1234', false, '2026-01-01', true),
+('9711321568', 'Nisha', '1234', false, '2026-01-01', true),
+('9289137685', 'Meena', '1234', false, '2026-01-01', true),
+('7678253940', 'Rekha', '1234', false, '2026-01-01', true),
+('9211984237', 'Amisha', '1234', false, '2026-01-01', true),
+('7838140223', 'Madhu', '1234', false, '2026-01-01', true),
+('8445669184', 'Rachna', '1234', false, '2026-01-01', true),
+('7017162405', 'Latesh', '1234', false, '2026-01-01', true),
+('7525820593', 'Seema', '1234', false, '2026-01-01', true),
+('8303972736', 'Sita', '1234', false, '2026-01-01', true),
+('9910466049', 'Poonam', '1234', false, '2026-01-01', true),
+('9935593567', 'Muskan', '1234', false, '2026-01-01', true),
+('9654784185', 'Chhote', '1234', false, '2026-01-01', true),
+('9354276567', 'Ashok', '1234', false, '2026-01-01', true),
+('9711891954', 'Ravi Arumugam', '1234', false, '2026-01-01', true),
+('9205231995', 'Ramniwas', '1234', false, '2026-01-01', true),
+('9911303276', 'Lucky', '1234', false, '2026-01-01', true),
+('8700569722', 'Mahesh', '1234', false, '2026-01-01', true),
+('9958422693', 'Moni', '1234', false, '2026-01-01', true),
+('9911352254', 'Chaman', '1234', false, '2026-01-01', true),
+('8285072541', 'Inderjeet', '1234', false, '2026-01-01', true),
+('9315341038', 'N.P. Singh', '1234', false, '2026-01-01', true),
+('9696418043', 'Rupesh', '1234', false, '2026-01-10', true),
+('8860693105', 'Nandini', '1234', false, '2026-02-10', true)
+ON CONFLICT (phone) DO NOTHING;
