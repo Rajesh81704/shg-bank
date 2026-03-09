@@ -314,3 +314,29 @@ def get_user_by_phone_with_payment_and_loan_history(db: Session, phone: str):
         "payment_history": payment_history,
         "loan_history": loan_history
     }
+
+
+def get_dashboard_stats(db: Session):
+    """Get dashboard statistics for admin"""
+    result = db.execute(text("""
+        SELECT 
+            (SELECT COUNT(*) FROM users WHERE is_admin = false) as total_members,
+            (SELECT COUNT(*) FROM users WHERE is_admin = false AND is_active = true) as active_members,
+            (SELECT COUNT(*) FROM loans WHERE status = 'pending') as pending_loans,
+            (SELECT COUNT(*) FROM loans WHERE status = 'approved') as approved_loans,
+            (SELECT COALESCE(SUM(amount), 0) FROM loans) as total_loan_amount,
+            (SELECT COUNT(*) FROM payments WHERE payment_type = 'monthly_contribution' AND payment_date IS NOT NULL) as total_contributions,
+            (SELECT COALESCE(SUM(total_loan_amount), 0) FROM payments WHERE payment_type = 'monthly_contribution' AND payment_date IS NOT NULL) as total_contribution_amount,
+            (SELECT COALESCE(SUM(penalty_amount), 0) FROM payments WHERE penalty_amount > 0) as total_penalties
+    """))
+    stats = result.fetchone()
+    return {
+        "total_members": stats[0],
+        "active_members": stats[1],
+        "pending_loans": stats[2],
+        "approved_loans": stats[3],
+        "total_loan_amount": float(stats[4]),
+        "total_contributions": stats[5],
+        "total_contribution_amount": float(stats[6]),
+        "total_penalties": float(stats[7])
+    }

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.api.database import get_db
 from app.api.schemas import UserCreate, UserResponse, PasswordReset, LoanResponse, UserResponseWithPaymentAndLoanHistory
+from typing import List
 from app.api.services.admin_service import (
     create_user_account, 
     reset_member_password, 
@@ -94,3 +95,25 @@ async def get_user_details_by_phone(
         return user
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/all-users", response_model=List[UserResponse])
+async def get_all_users_list(
+    db: Session = Depends(get_db),
+    current_admin: dict = Depends(get_admin_user)
+):
+    """Get all users (admin only)"""
+    from app.api.services.admin_service import get_all_user
+    users = get_all_user(db)
+    return users
+
+
+@router.get("/dashboard-stats")
+async def get_dashboard_statistics(
+    db: Session = Depends(get_db),
+    current_admin: dict = Depends(get_admin_user)
+):
+    """Get dashboard statistics (admin only)"""
+    from app.api.services.admin_service import get_dashboard_stats
+    stats = get_dashboard_stats(db)
+    return stats

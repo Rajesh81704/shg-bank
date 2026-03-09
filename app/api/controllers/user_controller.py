@@ -63,3 +63,17 @@ async def pay_monthly_contribution(
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/my-details")
+async def get_my_details(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get current user's full details with payment and loan history"""
+    from app.api.services.admin_service import get_user_by_phone_with_payment_and_loan_history
+    try:
+        details = get_user_by_phone_with_payment_and_loan_history(db, current_user["phone"])
+        return details
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))

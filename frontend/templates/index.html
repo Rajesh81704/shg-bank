@@ -3,39 +3,170 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SHG Bank System</title>
+    <title>SHG Bank — Self Help Group Banking System</title>
+    <meta name="description" content="Self Help Group Banking and Loan Management System - Manage members, loans, contributions and payments efficiently.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>SHG Bank System</h1>
-            <p>Self Help Group Banking and Loan Management</p>
-        </header>
 
-        <main id="app">
-            <div class="auth-section" id="authSection">
-                <div class="card">
-                    <h2>Login</h2>
-                    <form id="loginForm">
-                        <input type="text" id="username" placeholder="Username" required>
-                        <input type="password" id="password" placeholder="Password" required>
-                        <button type="submit">Login</button>
+    <!-- ==================== LOGIN PAGE ==================== -->
+    <div id="loginPage" class="login-page">
+        <div class="login-container">
+            <div class="login-left">
+                <div class="login-branding">
+                    <div class="login-logo">
+                        <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
+                            <rect width="56" height="56" rx="16" fill="white" fill-opacity="0.15"/>
+                            <path d="M28 14L40 21V35L28 42L16 35V21L28 14Z" stroke="white" stroke-width="2" fill="none"/>
+                            <path d="M28 22C30.2091 22 32 23.7909 32 26C32 28.2091 30.2091 30 28 30C25.7909 30 24 28.2091 24 26C24 23.7909 25.7909 22 28 22Z" fill="white"/>
+                            <path d="M22 36C22 32.6863 24.6863 30 28 30C31.3137 30 34 32.6863 34 36" stroke="white" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                    </div>
+                    <h1>SHG Bank</h1>
+                    <p class="login-tagline">Self Help Group Banking &amp; Loan Management System</p>
+                    <div class="login-features">
+                        <div class="feature-item">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                            <span>Secure Banking</span>
+                        </div>
+                        <div class="feature-item">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                            <span>Group Management</span>
+                        </div>
+                        <div class="feature-item">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                            <span>Easy Payments</span>
+                        </div>
+                        <div class="feature-item">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                            <span>Loan Tracking</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="login-right">
+                <div class="login-card">
+                    <div class="login-card-header">
+                        <h2>Welcome Back</h2>
+                        <p>Sign in to your account</p>
+                    </div>
+                    <form id="loginForm" autocomplete="off">
+                        <div class="form-group">
+                            <label for="loginPhone">Phone Number</label>
+                            <div class="input-icon-wrapper">
+                                <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                                <input type="tel" id="loginPhone" name="phone" placeholder="Enter your phone number" required aria-label="Phone Number" autocomplete="tel">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="loginPassword">Password</label>
+                            <div class="input-icon-wrapper">
+                                <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                <input type="password" id="loginPassword" name="password" placeholder="Enter your password" required aria-label="Password" autocomplete="current-password">
+                                <button type="button" class="toggle-password" id="togglePassword" aria-label="Toggle password visibility" tabindex="-1">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-full" id="loginBtn">
+                            <span class="btn-text">Sign In</span>
+                            <span class="btn-loader hidden">
+                                <svg class="spinner" width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="white" stroke-width="3" fill="none" stroke-dasharray="31.416" stroke-dashoffset="10" stroke-linecap="round"/></svg>
+                            </span>
+                        </button>
                     </form>
-                    <p class="error" id="errorMsg"></p>
+                    <div id="loginError" class="error-message hidden" role="alert"></div>
                 </div>
             </div>
+        </div>
+    </div>
 
-            <div class="dashboard" id="dashboard" style="display: none;">
-                <div class="header-bar">
-                    <h2>Welcome, <span id="userName"></span></h2>
-                    <button id="logoutBtn">Logout</button>
+    <!-- ==================== MAIN APPLICATION ==================== -->
+    <div id="mainApp" class="main-app hidden">
+        <!-- Sidebar -->
+        <aside id="sidebar" class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-logo">
+                    <svg width="32" height="32" viewBox="0 0 56 56" fill="none">
+                        <rect width="56" height="56" rx="16" fill="url(#sidebarLogoGrad)"/>
+                        <path d="M28 14L40 21V35L28 42L16 35V21L28 14Z" stroke="white" stroke-width="2" fill="none"/>
+                        <path d="M28 22C30.2091 22 32 23.7909 32 26C32 28.2091 30.2091 30 28 30C25.7909 30 24 28.2091 24 26C24 23.7909 25.7909 22 28 22Z" fill="white"/>
+                        <path d="M22 36C22 32.6863 24.6863 30 28 30C31.3137 30 34 32.6863 34 36" stroke="white" stroke-width="2" stroke-linecap="round"/>
+                        <defs><linearGradient id="sidebarLogoGrad" x1="0" y1="0" x2="56" y2="56"><stop stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs>
+                    </svg>
+                    <span class="sidebar-title">SHG Bank</span>
                 </div>
-                <div class="content" id="dashboardContent">
-                    <!-- Dynamic content loads here -->
-                </div>
+                <button id="sidebarToggle" class="sidebar-toggle" aria-label="Toggle sidebar">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
             </div>
-        </main>
+            <nav id="sidebarNav" class="sidebar-nav" role="navigation" aria-label="Main navigation">
+                <!-- Populated by JS -->
+            </nav>
+            <div class="sidebar-footer">
+                <div class="sidebar-user" id="sidebarUser">
+                    <div class="sidebar-avatar" id="sidebarAvatar"></div>
+                    <div class="sidebar-user-info">
+                        <span class="sidebar-user-name" id="sidebarUserName"></span>
+                        <span class="sidebar-user-role" id="sidebarUserRole"></span>
+                    </div>
+                </div>
+                <button id="logoutBtn" class="btn-logout" aria-label="Logout">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    <span>Logout</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Mobile Overlay -->
+        <div id="sidebarOverlay" class="sidebar-overlay hidden"></div>
+
+        <!-- Main Content Wrapper -->
+        <div class="main-wrapper">
+            <!-- Top Bar -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button id="mobileMenuBtn" class="mobile-menu-btn" aria-label="Open menu">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                    </button>
+                    <div class="topbar-page-info">
+                        <h1 id="pageTitle" class="page-title">Dashboard</h1>
+                        <p id="pageSubtitle" class="page-subtitle">Welcome back!</p>
+                    </div>
+                </div>
+                <div class="topbar-right">
+                    <div class="topbar-user">
+                        <div class="topbar-avatar" id="topbarAvatar"></div>
+                        <div class="topbar-user-details">
+                            <span class="topbar-name" id="topbarName"></span>
+                            <span class="topbar-role" id="topbarRole"></span>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Dynamic Content Area -->
+            <main id="contentArea" class="content-area" role="main">
+                <!-- Content rendered by JavaScript -->
+            </main>
+        </div>
+    </div>
+
+    <!-- ==================== TOAST NOTIFICATIONS ==================== -->
+    <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- ==================== MODAL ==================== -->
+    <div id="modalOverlay" class="modal-overlay hidden" role="dialog" aria-modal="true">
+        <div class="modal" id="modal">
+            <div class="modal-header">
+                <h3 id="modalTitle" class="modal-title"></h3>
+                <button class="modal-close" id="modalClose" aria-label="Close modal">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody"></div>
+        </div>
     </div>
 
     <script src="/static/js/app.js"></script>
