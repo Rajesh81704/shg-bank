@@ -1,11 +1,20 @@
+"""User controller for handling user-related endpoints"""
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.database import get_db
 from app.api.schemas import ApplyLoan, LoanResponse
-from app.api.services.loan_service import apply_for_loan, calculate_loan
+from app.api.services.loan_service import (
+    apply_for_loan,
+    calculate_loan,
+    process_monthly_contribution,
+    pay_loan_installment as pay_installment_service,
+    get_all_installments,
+    get_member_earnings
+)
 from app.api.middleware.auth_middleware import get_current_user
-from datetime import date
 
 router = APIRouter()
 
@@ -30,9 +39,7 @@ async def apply_loan(
         result = apply_for_loan(db, current_user["id"], loan_response)
         return result
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/loan_calculator")
@@ -47,7 +54,7 @@ async def loan_calculator(
         result = calculate_loan(amount, interest_rate, installments, start_date)
         return result
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/pay_monthly_contribution")
@@ -57,12 +64,11 @@ async def pay_monthly_contribution(
     current_user: dict = Depends(get_current_user)
 ):
     """Pay monthly contribution of ₹1000 with payment transaction ID"""
-    from app.api.services.loan_service import process_monthly_contribution
     try:
         result = process_monthly_contribution(db, current_user["id"], payment_transaction_id)
         return result
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/pay_loan_installment/{installment_id}")
@@ -73,12 +79,11 @@ async def pay_loan_installment(
     current_user: dict = Depends(get_current_user)
 ):
     """Pay a loan installment/EMI"""
-    from app.api.services.loan_service import pay_loan_installment as pay_installment
     try:
-        result = pay_installment(db, current_user["id"], installment_id, payment_transaction_id)
+        result = pay_installment_service(db, current_user["id"], installment_id, payment_transaction_id)
         return result
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/my_installments")
@@ -87,7 +92,6 @@ async def get_my_installments(
     current_user: dict = Depends(get_current_user)
 ):
     """Get all loan installments (pending and paid)"""
-    from app.api.services.loan_service import get_all_installments
     result = get_all_installments(db, current_user["id"])
     return result
 
@@ -98,9 +102,8 @@ async def get_my_earnings(
     current_user: dict = Depends(get_current_user)
 ):
     """Get my share of earnings from interest and penalties"""
-    from app.api.services.loan_service import get_member_earnings
     try:
         result = get_member_earnings(db, current_user["id"])
         return result
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
