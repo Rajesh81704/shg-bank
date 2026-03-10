@@ -6,7 +6,8 @@ from app.api.schemas import UserCreate, UserResponse, PasswordReset, LoanRespons
 from app.api.services.admin_service import (
     create_user_account, 
     reset_member_password, 
-    get_user_by_phone_with_payment_and_loan_history
+    get_user_by_phone_with_payment_and_loan_history,
+    get_financial_summary
 )
 from app.api.middleware.auth_middleware import get_admin_user
 from app.api.services.loan_service import approve_loan_application
@@ -94,3 +95,13 @@ async def get_user_details_by_phone(
         return user
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/financial_summary")
+async def get_financial_summary_endpoint(
+    db: Session = Depends(get_db),
+    current_admin: dict = Depends(get_admin_user)
+):
+    """Get financial summary: collections, disbursements, available amount, penalties"""
+    result = get_financial_summary(db)
+    return result

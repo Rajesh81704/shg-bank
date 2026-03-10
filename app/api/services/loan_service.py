@@ -346,3 +346,223 @@ def process_monthly_contribution(db: Session, member_id: int, payment_transactio
     }
 
 
+
+
+def pay_loan_installment(db: Session, member_id: int, installment_id: int, payment_transaction_id: str):
+    """Pay a loan installment"""
+    from datetime import datetime
+    
+    # Get installment details
+    result = db.execute(
+        text("""
+            SELECT id, member_id, total_pending_amount, due_date, payment_date, payment_type
+            FROM payments
+            WHERE id = :installment_id AND member_id = :member_id
+        """),
+        {"installment_id": installment_id, "member_id": member_id}
+    )
+    installment = result.fetchone()
+    
+    if not installment:
+        raise ValueError("Installment not found or does not belong to you")
+    
+    if installment[4] is not None:
+        raise ValueError("Installment already paid")
+    
+    if installment[5] != "loan_installment":
+        raise ValueError("This is not a loan installment")
+    
+    today = date.today()
+    due_date = installment[3]
+    
+    # Calculate penalty if late
+    days_late = 0
+    penalty_amount = 0.0
+    PENALTY_PER_DAY = 10.0
+    
+    if today > due_date:
+        penalty_start_date = due_date + timedelta(days=1)
+        if today >= penalty_start_date:
+            days_late = (today - due_date).days
+            penalty_amount = days_late * PENALTY_PER_DAY
+    
+    # Update payment record
+    db.execute(
+        text("""
+            UPDATE payments
+            SET payment_date = :payment_date,
+                days_late = :days_late,
+                penalty_amount = :penalty_amount,
+                total_pending_amount = 0,
+                transaction_id = :transaction_id
+            WHERE id = :installment_id
+        """),
+        {
+            "payment_date": today,
+            "days_late": days_late,
+            "penalty_amount": penalty_amount,
+            "transaction_id": f"EMI-{installment_id}-{payment_transaction_id}",
+            "installment_id": installment_id
+        }
+    )
+    
+    db.commit()
+    
+    return {
+        "message": "Loan installment paid successfully",
+        "installment_id": installment_id,
+        "amount_paid": installment[2],
+        "penalty_amount": penalty_amount,
+        "days_late": days_late,
+        "total_paid": installment[2] + penalty_amount,
+        "payment_date": today.strftime("%Y-%m-%d"),
+        "due_date": due_date.strftime("%Y-%m-%d"),
+        "transaction_id": f"EMI-{installment_id}-{payment_transaction_id}"
+    }
+
+
+def get_all_installments(db: Session, member_id: int):
+    """Get all loan installments (pending and paid) for a member"""
+    result = db.execute(
+        text("""
+            SELECT id, member_id, payment_type, total_loan_amount, description,
+                   payment_date, due_date, transaction_id, days_late, 
+                   penalty_amount, total_pending_amount
+            FROM payments
+            WHERE member_id = :member_id AND payment_type = 'loan_installment'
+            ORDER BY due_date ASC
+        """),
+        {"member_id": member_id}
+    )
+    installments = result.fetchall()
+    
+    pending = []
+    paid = []
+    
+    for inst in installments:
+        installment_data = {
+            "id": inst[0],
+            "member_id": inst[1],
+            "payment_type": inst[2],
+            "total_loan_amount": inst[3],
+            "description": inst[4],
+            "payment_date": inst[5].strftime("%Y-%m-%d") if inst[5] else None,
+            "due_date": inst[6].strftime("%Y-%m-%d") if inst[6] else None,
+            "transaction_id": inst[7],
+            "days_late": inst[8],
+            "penalty_amount": inst[9],
+            "total_pending_amount": inst[10],
+            "status": "paid" if inst[5] else "pending"
+        }
+        
+        if inst[5]:  # payment_date is not null
+            paid.append(installment_data)
+        else:
+            pending.append(installment_data)
+    
+    return {
+        "total_installments": len(installments),
+        "pending_count": len(pending),
+        "paid_count": len(paid),
+        "pending_installments": pending,
+        "paid_installments": paid
+    }
+
+
+def get_member_earnings(db: Session, member_id: int):
+    """Calculate member's share of earnings from interest and penalties"""
+    
+    # Get total active members count
+    result = db.execute(
+        text("""
+            SELECT COUNT(*) FROM users WHERE is_active = true AND is_admin = false
+        """)
+    )
+    total_members = result.fetchone()[0]
+    
+    if total_members == 0:
+        raise ValueError("No active members found")
+    
+    # Get all approved loans with their details
+    result = db.execute(
+        text("""
+            SELECT id, amount, interest_rate, installments
+            FROM loans
+            WHERE status = 'approved'
+        """)
+    )
+    loans = result.fetchall()
+    
+    total_interest_earned = 0
+    
+    # Calculate interest for each loan using reducing balance method
+    for loan in loans:
+        loan_id, amount, interest_rate, installments = loan
+        
+        # Count how many installments have been paid for this loan
+        result = db.execute(
+            text("""
+                SELECT COUNT(*) 
+                FROM payments 
+                WHERE payment_type = 'loan_installment' 
+                AND description LIKE :pattern
+                AND payment_date IS NOT NULL
+            """),
+            {"pattern": f"Loan #{loan_id} -%"}
+        )
+        paid_count = result.fetchone()[0]
+        
+        if paid_count > 0:
+            # Calculate interest using reducing balance
+            monthly_interest_rate = interest_rate / 100
+            principal_per_month = amount / installments
+            remaining_balance = amount
+            
+            for month in range(1, paid_count + 1):
+                interest_for_month = remaining_balance * monthly_interest_rate
+                total_interest_earned += interest_for_month
+                remaining_balance -= principal_per_month
+    
+    # Get total penalties collected
+    result = db.execute(
+        text("""
+            SELECT COALESCE(SUM(penalty_amount), 0) as total_penalties
+            FROM payments
+            WHERE payment_date IS NOT NULL AND penalty_amount > 0
+        """)
+    )
+    total_penalties = result.fetchone()[0]
+    
+    # Calculate per member share
+    interest_per_member = total_interest_earned / total_members if total_members > 0 else 0
+    penalty_per_member = total_penalties / total_members if total_members > 0 else 0
+    total_earning_per_member = interest_per_member + penalty_per_member
+    
+    # Get member's own penalty paid (to show separately)
+    result = db.execute(
+        text("""
+            SELECT COALESCE(SUM(penalty_amount), 0) as my_penalties
+            FROM payments
+            WHERE member_id = :member_id AND payment_date IS NOT NULL
+        """),
+        {"member_id": member_id}
+    )
+    member_penalty_paid = result.fetchone()[0]
+    
+    return {
+        "member_id": member_id,
+        "total_active_members": total_members,
+        "earnings": {
+            "interest_share": round(interest_per_member, 2),
+            "penalty_share": round(penalty_per_member, 2),
+            "total_earning": round(total_earning_per_member, 2)
+        },
+        "group_totals": {
+            "total_interest_earned": round(total_interest_earned, 2),
+            "total_penalties_collected": round(total_penalties, 2),
+            "grand_total": round(total_interest_earned + total_penalties, 2)
+        },
+        "member_contribution": {
+            "penalty_paid_by_me": round(member_penalty_paid, 2)
+        }
+    }

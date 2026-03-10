@@ -63,3 +63,44 @@ async def pay_monthly_contribution(
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/pay_loan_installment/{installment_id}")
+async def pay_loan_installment(
+    installment_id: int,
+    payment_transaction_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Pay a loan installment/EMI"""
+    from app.api.services.loan_service import pay_loan_installment as pay_installment
+    try:
+        result = pay_installment(db, current_user["id"], installment_id, payment_transaction_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/my_installments")
+async def get_my_installments(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get all loan installments (pending and paid)"""
+    from app.api.services.loan_service import get_all_installments
+    result = get_all_installments(db, current_user["id"])
+    return result
+
+
+@router.get("/my_earnings")
+async def get_my_earnings(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get my share of earnings from interest and penalties"""
+    from app.api.services.loan_service import get_member_earnings
+    try:
+        result = get_member_earnings(db, current_user["id"])
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

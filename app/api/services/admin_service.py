@@ -314,3 +314,114 @@ def get_user_by_phone_with_payment_and_loan_history(db: Session, phone: str):
         "payment_history": payment_history,
         "loan_history": loan_history
     }
+
+
+def get_financial_summary(db: Session):
+    """Get complete financial summary of the SHG"""
+    
+    # Total monthly contributions collected
+    result = db.execute(
+        text("""
+            SELECT 
+                COALESCE(SUM(total_loan_amount), 0) as total_contributions,
+                COALESCE(SUM(penalty_amount), 0) as contribution_penalties,
+                COUNT(*) as total_contribution_payments
+            FROM payments
+            WHERE payment_type = 'monthly_contribution' AND payment_date IS NOT NULL
+        """)
+    )
+    contributions = result.fetchone()
+    
+    # Total loan installments collected
+    result = db.execute(
+        text("""
+            SELECT 
+                COALESCE(SUM(total_loan_amount), 0) as total_emi_collected,
+                COALESCE(SUM(penalty_amount), 0) as emi_penalties,
+                COUNT(*) as total_emi_payments
+            FROM payments
+            WHERE payment_type = 'loan_installment' AND payment_date IS NOT NULL
+        """)
+    )
+    emi_collections = result.fetchone()
+    
+    # Total loans disbursed
+    result = db.execute(
+        text("""
+            SELECT 
+                COALESCE(SUM(amount), 0) as total_disbursed,
+                COUNT(*) as total_loans
+            FROM loans
+            WHERE status = 'approved'
+        """)
+    )
+    loans_disbursed = result.fetchone()
+    
+    # Pending loan installments
+    result = db.execute(
+        text("""
+            SELECT 
+                COALESCE(SUM(total_pending_amount), 0) as pending_emi_amount,
+                COUNT(*) as pending_emi_count
+            FROM payments
+            WHERE payment_type = 'loan_installment' AND payment_date IS NULL
+        """)
+    )
+    pending_emis = result.fetchone()
+    
+    # Member-wise penalty details
+    result = db.execute(
+        text("""
+            SELECT 
+                u.id,
+                u.name,
+                u.phone,
+                COALESCE(SUM(p.penalty_amount), 0) as total_penalty
+            FROM users u
+            LEFT JOIN payments p ON u.id = p.member_id
+            WHERE p.penalty_amount > 0
+            GROUP BY u.id, u.name, u.phone
+            ORDER BY total_penalty DESC
+        """)
+    )
+    member_penalties = result.fetchall()
+    
+    # Calculate totals
+    total_collection = contributions[0] + emi_collections[0]
+    total_penalties = contributions[1] + emi_collections[1]
+    total_disbursed = loans_disbursed[0]
+    
+    # Available amount = Total collections + Total penalties - Total disbursed
+    available_amount = total_collection + total_penalties - total_disbursed
+    
+    # Member penalty list
+    penalty_members = []
+    for member in member_penalties:
+        penalty_members.append({
+            "member_id": member[0],
+            "name": member[1],
+            "phone": member[2],
+            "total_penalty": member[3]
+        })
+    
+    return {
+        "summary": {
+            "total_collection": round(total_collection, 2),
+            "total_contributions": round(contributions[0], 2),
+            "total_emi_collected": round(emi_collections[0], 2),
+            "total_penalties": round(total_penalties, 2),
+            "contribution_penalties": round(contributions[1], 2),
+            "emi_penalties": round(emi_collections[1], 2),
+            "total_loans_disbursed": round(total_disbursed, 2),
+            "pending_emi_amount": round(pending_emis[0], 2),
+            "available_amount": round(available_amount, 2)
+        },
+        "statistics": {
+            "total_contribution_payments": contributions[2],
+            "total_emi_payments": emi_collections[2],
+            "total_loans_approved": loans_disbursed[1],
+            "pending_emi_count": pending_emis[1],
+            "members_with_penalties": len(penalty_members)
+        },
+        "members_with_penalties": penalty_members
+    }
