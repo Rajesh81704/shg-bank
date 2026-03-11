@@ -573,3 +573,112 @@ select.form-input {
     .sidebar, .topbar, .sidebar-overlay { display:none !important; }
     .main-wrapper { margin-left:0 !important; }
 }
+
+
+.classy-table-card{
+    border-radius:12px;
+    box-shadow:0 10px 30px rgba(0,0,0,0.08);
+    background:#fff;
+}
+
+.classy-header{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:18px 22px;
+    border-bottom:1px solid #eee;
+}
+
+.member-count{
+    font-size:13px;
+    color:#666;
+}
+
+.table-container{
+    overflow-x:auto;
+}
+
+.classy-table{
+    width:100%;
+    border-collapse:collapse;
+}
+
+.classy-table thead{
+    background:#f8fafc;
+}
+
+.classy-table th{
+    padding:14px;
+    text-align:left;
+    font-size:12px;
+    text-transform:uppercase;
+    letter-spacing:1px;
+    color:#666;
+}
+
+.classy-table td{
+    padding:16px 14px;
+    border-top:1px solid #f1f1f1;
+}
+
+.classy-table tbody tr:nth-child(even){
+    background:#fcfcfc;
+}
+
+.classy-table tbody tr:hover{
+    background:#f9fafb;
+}
+
+/* member info */
+
+.member-info{
+    display:flex;
+    align-items:center;
+    gap:10px;
+}
+
+.avatar{
+    width:32px;
+    height:32px;
+    border-radius:50%;
+    background:#6366f1;
+    color:white;
+    font-weight:bold;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+}
+
+/* badges */
+
+.badge{
+    padding:5px 10px;
+    border-radius:20px;
+    font-size:12px;
+    font-weight:600;
+}
+
+.badge.admin{
+    background:#ede9fe;
+    color:#6d28d9;
+}
+
+.badge.member{
+    background:#e0f2fe;
+    color:#0369a1;
+}
+
+.badge.active{
+    background:#dcfce7;
+    color:#15803d;
+}
+
+.badge.inactive{
+    background:#fee2e2;
+    color:#b91c1c;
+}
+
+.id-col{
+    font-weight:600;
+    color:#444;
+}
