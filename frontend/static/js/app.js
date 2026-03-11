@@ -157,6 +157,7 @@ const api = {
     allLoans: () => apiFetch('/all-loans'),
     userDetails: phone => apiFetch(`/user_details/${phone}`),
     financialSummary: () => apiFetch('/financial_summary'),
+    allUsers: () => apiFetch('/all-users'),
     memberEarnings: phone => apiFetch('/member-earnings/' + phone),
     toggleEmiStatus: id => apiFetch('/toggle-emi-status/' + id, {method:'PUT'}),
     deleteLoan: id => apiFetch('/delete-loan/' + id, {method:'DELETE'}),
@@ -370,8 +371,35 @@ async function renderMembers() {
             </form>
         </div>
     </div>
-    <div id="memberSearchResult" style="margin-top:20px"></div>`;
-        $('memberSearchForm').addEventListener('submit', async e => {
+    <div id="memberSearchResult" style="margin-top:20px"></div>
+    <div id="allMembersList" style="margin-top:20px"></div>`;
+
+    // Load all members automatically
+    (async () => {
+        const listDiv = $('allMembersList');
+        try {
+            const users = await api.allUsers();
+            let usersHtml = `<div class="card section-gap"><div class="card-header"><h3 class="card-title">All Members</h3></div><div class="card-body"><div class="table-responsive"><table class="table">
+                <thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Role</th><th>Status</th><th>Joined</th></tr></thead><tbody>
+            `;
+            users.forEach(u => {
+                usersHtml += `<tr>
+                    <td>${u.id}</td>
+                    <td>${u.name}</td>
+                    <td>${u.phone}</td>
+                    <td>${u.is_admin ? '<span class="badge badge-purple">Admin</span>' : '<span class="badge badge-info">Member</span>'}</td>
+                    <td>${u.is_active ? '<span class="badge badge-success"><span class="badge-dot"></span>Active</span>' : '<span class="badge badge-danger"><span class="badge-dot"></span>Inactive</span>'}</td>
+                    <td>${formatDate(u.join_date)}</td>
+                </tr>`;
+            });
+            usersHtml += `</tbody></table></div></div></div>`;
+            listDiv.innerHTML = usersHtml;
+        } catch(err) {
+            listDiv.innerHTML = `<div class="empty-state">Failed to load members</div>`;
+        }
+    })();
+
+    $('memberSearchForm').addEventListener('submit', async e => {
         e.preventDefault();
         const phone = $('memberSearchPhone').value.trim();
         if (!phone) return;
