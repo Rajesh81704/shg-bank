@@ -14,8 +14,10 @@ from app.api.services.admin_service import (
     create_user_account,
     create_emergency_admin,
     reset_member_password,
+    get_all_users,
     get_user_by_phone_with_payment_and_loan_history,
-    get_financial_summary
+    get_dashboard_stats,
+    get_financial_summary,
 )
 from app.api.services.loan_service import approve_loan_application, get_all_loans
 from app.api.middleware.auth_middleware import get_admin_user
@@ -87,6 +89,24 @@ async def get_all_loans_list(
     return loans
 
 
+@router.get("/all-users", response_model=list[UserResponse])
+async def get_all_users_list(
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """Get all users (admin only)"""
+    return get_all_users(db)
+
+
+@router.get("/dashboard-stats")
+async def get_dashboard_stats_endpoint(
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """Get dashboard statistics (admin only)"""
+    return get_dashboard_stats(db)
+
+
 @router.get("/user_details/{phone}", response_model=UserResponseWithPaymentAndLoanHistory)
 async def get_user_details_by_phone(
     phone: str,
@@ -109,3 +129,73 @@ async def get_financial_summary_endpoint(
     """Get financial summary: collections, disbursements, available amount, penalties"""
     result = get_financial_summary(db)
     return result
+
+
+@router.put("/toggle-emi-status/{payment_id}")
+async def toggle_emi_status(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """Toggle EMI payment status between paid and pending (admin only)"""
+    from app.api.services.admin_service import toggle_emi_payment_status
+    try:
+        result = toggle_emi_payment_status(db, payment_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.delete("/delete-loan/{loan_id}")
+async def delete_loan(
+    loan_id: int,
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """Delete a loan and all its associated payments (admin only)"""
+    from app.api.services.admin_service import delete_loan as delete_loan_service
+    try:
+        result = delete_loan_service(db, loan_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.post("/create-loan-for-member")
+async def create_loan_for_member(
+    phone: str,
+    amount: float,
+    interest_rate: float = 2.0,
+    installments: int = 6,
+    start_date: str = None,
+    description: str = None,
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """Create and approve a loan for a member by phone with custom start date (admin only)"""
+    from app.api.services.admin_service import create_loan_for_member as create_loan
+    from datetime import date
+    
+    if not start_date:
+        start_date = date.today().strftime("%Y-%m-%d")
+    
+    try:
+        result = create_loan(db, phone, amount, interest_rate, installments, start_date, description)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get("/member-installments/{phone}")
+async def get_member_installments(
+    phone: str,
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """Get all EMI installments (pending and paid) for a member by phone (admin only)"""
+    from app.api.services.admin_service import get_member_installments_by_phone
+    try:
+        result = get_member_installments_by_phone(db, phone)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e

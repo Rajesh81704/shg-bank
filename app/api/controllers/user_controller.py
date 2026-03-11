@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.database import get_db
-from app.api.schemas import ApplyLoan, LoanResponse
+from app.api.schemas import ApplyLoan, LoanResponse, UserResponseWithPaymentAndLoanHistory
+from app.api.services.admin_service import get_user_details_by_id
 from app.api.services.loan_service import (
     apply_for_loan,
     calculate_loan,
@@ -27,6 +28,14 @@ async def get_profile(current_user: dict = Depends(get_current_user)):
         "is_active": current_user["is_active"],
         "name": current_user["name"]
     }
+
+@router.get("/my-details", response_model=UserResponseWithPaymentAndLoanHistory)
+async def get_my_details(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get current user's full details with payment and loan history"""
+    return get_user_details_by_id(db, current_user["id"])
 
 @router.post("/apply-loan", response_model=LoanResponse)
 async def apply_loan(

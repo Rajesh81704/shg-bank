@@ -1,12 +1,87 @@
-from sqlalchemy.orm import Session
-from sqlalchemy import text
 from datetime import date
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.api.schemas import UserCreate
 
+
+# ---- Row-to-dict helpers ----
+
+def _row_to_user(row) -> dict:
+    return {
+        "id": row[0],
+        "phone": row[1],
+        "name": row[2],
+        "is_admin": row[3],
+        "join_date": row[4],
+        "is_active": row[5],
+    }
+
+
+def _row_to_payment(row) -> dict:
+    return {
+        "id": row[0],
+        "member_id": row[1],
+        "payment_type": row[2],
+        "total_loan_amount": row[3],
+        "description": row[4],
+        "payment_date": row[5],
+        "due_date": row[6],
+        "transaction_id": row[7],
+        "days_late": row[8],
+        "penalty_amount": row[9],
+        "total_pending_amount": row[10],
+    }
+
+
+def _row_to_loan(row) -> dict:
+    return {
+        "id": row[0],
+        "member_id": row[1],
+        "amount": row[2],
+        "interest_rate": row[3],
+        "installments": row[4],
+        "status": row[5],
+        "start_date": row[6],
+        "end_date": row[7],
+        "description": row[8],
+    }
+
+
+def _get_payment_history(db: Session, user_id: int) -> list[dict]:
+    result = db.execute(
+        text("""
+            SELECT id, member_id, payment_type, total_loan_amount, description,
+                   payment_date, due_date, transaction_id, days_late,
+                   penalty_amount, total_pending_amount
+            FROM payments
+            WHERE member_id = :user_id
+            ORDER BY payment_date DESC
+        """),
+        {"user_id": user_id}
+    )
+    return [_row_to_payment(row) for row in result.fetchall()]
+
+
+def _get_loan_history(db: Session, user_id: int) -> list[dict]:
+    result = db.execute(
+        text("""
+            SELECT id, member_id, amount, interest_rate, installments,
+                   status, start_date, end_date, description
+            FROM loans
+            WHERE member_id = :user_id
+            ORDER BY start_date DESC
+        """),
+        {"user_id": user_id}
+    )
+    return [_row_to_loan(row) for row in result.fetchall()]
+
+
+# ---- Service functions ----
+
 def create_user_account(db: Session, user_data: UserCreate) -> dict:
     """Create a new user account"""
-    # Check if phone already exists
     result = db.execute(
         text("SELECT id FROM users WHERE phone = :phone"),
         {"phone": user_data.phone}
@@ -14,7 +89,6 @@ def create_user_account(db: Session, user_data: UserCreate) -> dict:
     if result.fetchone():
         raise ValueError("Phone number already registered")
 
-    # Insert new user with plain text password
     result = db.execute(
         text("""
             INSERT INTO users (phone, name, password, is_admin, join_date, is_active)
@@ -31,47 +105,11 @@ def create_user_account(db: Session, user_data: UserCreate) -> dict:
         }
     )
     db.commit()
-
-    user = result.fetchone()
-    return {
-        "id": user[0],
-        "phone": user[1],
-        "name": user[2],
-        "is_admin": user[3],
-        "join_date": user[4],
-        "is_active": user[5]
-    }
+    return _row_to_user(result.fetchone())
 
 
-def get_all_user(db: Session):
-    """Get all users with their payment details"""
-    result = db.execute(
-        text("""
-            SELECT 
-                u.id, u.phone, u.name, u.is_admin, u.join_date, u.is_active
-                from users u
-        """)
-    )
-    rows = result.fetchall()
-
-    users_dict = {}
-    for row in rows:
-        user_id = row[0]
-        if user_id not in users_dict:
-            users_dict[user_id] = {
-                "id": row[0],
-                "phone": row[1],
-                "name": row[2],
-                "is_admin": row[3],
-                "join_date": row[4],
-                "is_active": row[5],
-            }
-    return list(users_dict.values())
-
-
-def create_emergency_admin(db: Session, user_data):
+def create_emergency_admin(db: Session, user_data: UserCreate):
     """Create emergency admin user without authentication"""
-    # Check if phone already exists
     result = db.execute(
         text("SELECT id FROM users WHERE phone = :phone"),
         {"phone": user_data.phone}
@@ -79,7 +117,6 @@ def create_emergency_admin(db: Session, user_data):
     if result.fetchone():
         raise ValueError("Phone number already registered")
 
-    # Get next id from sequence
     result = db.execute(
         text("""
             INSERT INTO users (id, phone, name, password, is_admin, join_date, is_active)
@@ -96,37 +133,26 @@ def create_emergency_admin(db: Session, user_data):
         }
     )
     db.commit()
-
-    user = result.fetchone()
-    return {
-        "id": user[0],
-        "phone": user[1],
-        "name": user[2],
-        "is_admin": user[3],
-        "join_date": user[4],
-        "is_active": user[5]
-    }
+    return _row_to_user(result.fetchone())
 
 
 def reset_member_password(db: Session, phone: str, new_password: str):
     """Reset a member's password (admin only)"""
-    # Check if user exists
     result = db.execute(
         text("SELECT id, name FROM users WHERE phone = :phone"),
         {"phone": phone}
     )
     user = result.fetchone()
-    
+
     if not user:
         raise ValueError("User not found")
-    
-    # Update password
+
     db.execute(
         text("UPDATE users SET password = :password WHERE phone = :phone"),
         {"password": new_password, "phone": phone}
     )
     db.commit()
-    
+
     return {
         "message": "Password reset successfully",
         "user_id": user[0],
@@ -135,100 +161,20 @@ def reset_member_password(db: Session, phone: str, new_password: str):
     }
 
 
-def get_all_user_with_payment_and_loan_history(db: Session):
-    """Get all users with their payment details and loan history"""
-    # Get all users
-    users_result = db.execute(
+def get_all_users(db: Session) -> list[dict]:
+    """Get all users"""
+    result = db.execute(
         text("""
             SELECT id, phone, name, is_admin, join_date, is_active
             FROM users
             ORDER BY id
         """)
     )
-    users = users_result.fetchall()
-    
-    users_list = []
-    
-    for user in users:
-        user_id = user[0]
-        
-        # Get payment history for this user
-        payments_result = db.execute(
-            text("""
-                SELECT id, member_id, payment_type, total_loan_amount, description,
-                       payment_date, due_date, transaction_id, days_late, 
-                       penalty_amount, total_pending_amount
-                FROM payments
-                WHERE member_id = :user_id
-                ORDER BY payment_date DESC
-            """),
-            {"user_id": user_id}
-        )
-        payments = payments_result.fetchall()
-        
-        # Get loan history for this user
-        loans_result = db.execute(
-            text("""
-                SELECT id, member_id, amount, interest_rate, installments,
-                       status, start_date, end_date, description
-                FROM loans
-                WHERE member_id = :user_id
-                ORDER BY start_date DESC
-            """),
-            {"user_id": user_id}
-        )
-        loans = loans_result.fetchall()
-        
-        # Build payment history list
-        payment_history = []
-        for payment in payments:
-            payment_history.append({
-                "id": payment[0],
-                "member_id": payment[1],
-                "payment_type": payment[2],
-                "total_loan_amount": payment[3],
-                "description": payment[4],
-                "payment_date": payment[5],
-                "due_date": payment[6],
-                "transaction_id": payment[7],
-                "days_late": payment[8],
-                "penalty_amount": payment[9],
-                "total_pending_amount": payment[10]
-            })
-        
-        # Build loan history list
-        loan_history = []
-        for loan in loans:
-            loan_history.append({
-                "id": loan[0],
-                "member_id": loan[1],
-                "amount": loan[2],
-                "interest_rate": loan[3],
-                "installments": loan[4],
-                "status": loan[5],
-                "start_date": loan[6],
-                "end_date": loan[7],
-                "description": loan[8]
-            })
-        
-        # Build user object with payment and loan history
-        users_list.append({
-            "id": user[0],
-            "phone": user[1],
-            "name": user[2],
-            "is_admin": user[3],
-            "join_date": user[4],
-            "is_active": user[5],
-            "payment_history": payment_history,
-            "loan_history": loan_history
-        })
-    
-    return users_list
+    return [_row_to_user(row) for row in result.fetchall()]
 
 
 def get_user_by_phone_with_payment_and_loan_history(db: Session, phone: str):
     """Get user by phone number with their payment details and loan history"""
-    # Get user by phone
     user_result = db.execute(
         text("""
             SELECT id, phone, name, is_admin, join_date, is_active
@@ -238,91 +184,88 @@ def get_user_by_phone_with_payment_and_loan_history(db: Session, phone: str):
         {"phone": phone}
     )
     user = user_result.fetchone()
-    
+
     if not user:
         raise ValueError("User not found")
-    
-    user_id = user[0]
-    
-    # Get payment history for this user
-    payments_result = db.execute(
+
+    user_dict = _row_to_user(user)
+    user_dict["payment_history"] = _get_payment_history(db, user[0])
+    user_dict["loan_history"] = _get_loan_history(db, user[0])
+    return user_dict
+
+
+def get_user_details_by_id(db: Session, user_id: int):
+    """Get user by ID with their payment details and loan history"""
+    user_result = db.execute(
         text("""
-            SELECT id, member_id, payment_type, total_loan_amount, description,
-                   payment_date, due_date, transaction_id, days_late, 
-                   penalty_amount, total_pending_amount
-            FROM payments
-            WHERE member_id = :user_id
-            ORDER BY payment_date DESC
+            SELECT id, phone, name, is_admin, join_date, is_active
+            FROM users
+            WHERE id = :user_id
         """),
         {"user_id": user_id}
     )
-    payments = payments_result.fetchall()
-    
-    # Get loan history for this user
-    loans_result = db.execute(
+    user = user_result.fetchone()
+
+    if not user:
+        raise ValueError("User not found")
+
+    user_dict = _row_to_user(user)
+    user_dict["payment_history"] = _get_payment_history(db, user_id)
+    user_dict["loan_history"] = _get_loan_history(db, user_id)
+    return user_dict
+
+
+def get_dashboard_stats(db: Session) -> dict:
+    """Get dashboard statistics for admin view"""
+    result = db.execute(
         text("""
-            SELECT id, member_id, amount, interest_rate, installments,
-                   status, start_date, end_date, description
+            SELECT
+                COUNT(*) as total_members,
+                COUNT(*) FILTER (WHERE is_active = true) as active_members
+            FROM users
+        """)
+    )
+    members = result.fetchone()
+
+    result = db.execute(
+        text("""
+            SELECT
+                COUNT(*) FILTER (WHERE status = 'approved') as approved_loans,
+                COALESCE(SUM(amount) FILTER (WHERE status = 'approved'), 0) as total_loan_amount,
+                COUNT(*) FILTER (WHERE status = 'pending') as pending_loans
             FROM loans
-            WHERE member_id = :user_id
-            ORDER BY start_date DESC
-        """),
-        {"user_id": user_id}
+        """)
     )
-    loans = loans_result.fetchall()
-    
-    # Build payment history list
-    payment_history = []
-    for payment in payments:
-        payment_history.append({
-            "id": payment[0],
-            "member_id": payment[1],
-            "payment_type": payment[2],
-            "total_loan_amount": payment[3],
-            "description": payment[4],
-            "payment_date": payment[5],
-            "due_date": payment[6],
-            "transaction_id": payment[7],
-            "days_late": payment[8],
-            "penalty_amount": payment[9],
-            "total_pending_amount": payment[10]
-        })
-    
-    # Build loan history list
-    loan_history = []
-    for loan in loans:
-        loan_history.append({
-            "id": loan[0],
-            "member_id": loan[1],
-            "amount": loan[2],
-            "interest_rate": loan[3],
-            "installments": loan[4],
-            "status": loan[5],
-            "start_date": loan[6],
-            "end_date": loan[7],
-            "description": loan[8]
-        })
-    
-    # Build user object with payment and loan history
+    loans = result.fetchone()
+
+    result = db.execute(
+        text("""
+            SELECT
+                COUNT(*) as total_contributions,
+                COALESCE(SUM(total_loan_amount), 0) as total_contribution_amount
+            FROM payments
+            WHERE payment_type = 'monthly_contribution' AND payment_date IS NOT NULL
+        """)
+    )
+    contributions = result.fetchone()
+
     return {
-        "id": user[0],
-        "phone": user[1],
-        "name": user[2],
-        "is_admin": user[3],
-        "join_date": user[4],
-        "is_active": user[5],
-        "payment_history": payment_history,
-        "loan_history": loan_history
+        "total_members": members[0],
+        "active_members": members[1],
+        "approved_loans": loans[0],
+        "total_loan_amount": round(float(loans[1]), 2),
+        "pending_loans": loans[2],
+        "total_contributions": contributions[0],
+        "total_contribution_amount": round(float(contributions[1]), 2),
     }
 
 
 def get_financial_summary(db: Session):
     """Get complete financial summary of the SHG"""
-    
-    # Total monthly contributions collected
+
     result = db.execute(
         text("""
-            SELECT 
+            SELECT
                 COALESCE(SUM(total_loan_amount), 0) as total_contributions,
                 COALESCE(SUM(penalty_amount), 0) as contribution_penalties,
                 COUNT(*) as total_contribution_payments
@@ -331,11 +274,10 @@ def get_financial_summary(db: Session):
         """)
     )
     contributions = result.fetchone()
-    
-    # Total loan installments collected
+
     result = db.execute(
         text("""
-            SELECT 
+            SELECT
                 COALESCE(SUM(total_loan_amount), 0) as total_emi_collected,
                 COALESCE(SUM(penalty_amount), 0) as emi_penalties,
                 COUNT(*) as total_emi_payments
@@ -344,11 +286,10 @@ def get_financial_summary(db: Session):
         """)
     )
     emi_collections = result.fetchone()
-    
-    # Total loans disbursed
+
     result = db.execute(
         text("""
-            SELECT 
+            SELECT
                 COALESCE(SUM(amount), 0) as total_disbursed,
                 COUNT(*) as total_loans
             FROM loans
@@ -356,11 +297,10 @@ def get_financial_summary(db: Session):
         """)
     )
     loans_disbursed = result.fetchone()
-    
-    # Pending loan installments
+
     result = db.execute(
         text("""
-            SELECT 
+            SELECT
                 COALESCE(SUM(total_pending_amount), 0) as pending_emi_amount,
                 COUNT(*) as pending_emi_count
             FROM payments
@@ -368,11 +308,10 @@ def get_financial_summary(db: Session):
         """)
     )
     pending_emis = result.fetchone()
-    
-    # Member-wise penalty details
+
     result = db.execute(
         text("""
-            SELECT 
+            SELECT
                 u.id,
                 u.name,
                 u.phone,
@@ -385,25 +324,22 @@ def get_financial_summary(db: Session):
         """)
     )
     member_penalties = result.fetchall()
-    
-    # Calculate totals
+
     total_collection = contributions[0] + emi_collections[0]
     total_penalties = contributions[1] + emi_collections[1]
     total_disbursed = loans_disbursed[0]
-    
-    # Available amount = Total collections + Total penalties - Total disbursed
     available_amount = total_collection + total_penalties - total_disbursed
-    
-    # Member penalty list
-    penalty_members = []
-    for member in member_penalties:
-        penalty_members.append({
+
+    penalty_members = [
+        {
             "member_id": member[0],
             "name": member[1],
             "phone": member[2],
             "total_penalty": member[3]
-        })
-    
+        }
+        for member in member_penalties
+    ]
+
     return {
         "summary": {
             "total_collection": round(total_collection, 2),
@@ -424,4 +360,366 @@ def get_financial_summary(db: Session):
             "members_with_penalties": len(penalty_members)
         },
         "members_with_penalties": penalty_members
+    }
+
+
+def toggle_emi_payment_status(db: Session, payment_id: int):
+    """Toggle EMI payment status between paid and pending (admin only)"""
+    from datetime import date as date_today
+    
+    # Check if payment exists and is a loan installment
+    result = db.execute(
+        text("""
+            SELECT id, payment_type, member_id, description, payment_date, due_date, total_pending_amount
+            FROM payments
+            WHERE id = :payment_id
+        """),
+        {"payment_id": payment_id}
+    )
+    payment = result.fetchone()
+    
+    if not payment:
+        raise ValueError("Payment not found")
+    
+    if payment[1] != "loan_installment":
+        raise ValueError("This is not a loan installment payment")
+    
+    payment_date = payment[4]
+    due_date = payment[5]
+    pending_amount = payment[6]
+    
+    if payment_date is None:
+        # Currently pending -> Mark as paid
+        db.execute(
+            text("""
+                UPDATE payments 
+                SET payment_date = :payment_date,
+                    days_late = 0,
+                    penalty_amount = 0.0,
+                    total_pending_amount = 0
+                WHERE id = :payment_id
+            """),
+            {
+                "payment_date": due_date if due_date else date_today.today(),
+                "payment_id": payment_id
+            }
+        )
+        db.commit()
+        
+        return {
+            "message": "EMI payment marked as paid successfully",
+            "payment_id": payment_id,
+            "member_id": payment[2],
+            "description": payment[3],
+            "new_status": "paid",
+            "payment_date": (due_date if due_date else date_today.today()).strftime("%Y-%m-%d")
+        }
+    else:
+        # Currently paid -> Mark as pending
+        # Get original pending amount from the installment calculation
+        result = db.execute(
+            text("""
+                SELECT total_loan_amount FROM payments WHERE id = :payment_id
+            """),
+            {"payment_id": payment_id}
+        )
+        
+        db.execute(
+            text("""
+                UPDATE payments 
+                SET payment_date = NULL,
+                    days_late = 0,
+                    penalty_amount = 0.0
+                WHERE id = :payment_id
+            """),
+            {"payment_id": payment_id}
+        )
+        db.commit()
+        
+        return {
+            "message": "EMI payment marked as pending successfully",
+            "payment_id": payment_id,
+            "member_id": payment[2],
+            "description": payment[3],
+            "new_status": "pending",
+            "previous_payment_date": payment_date.strftime("%Y-%m-%d")
+        }
+
+
+def delete_loan(db: Session, loan_id: int):
+    """Delete a loan and all its associated payments (admin only)"""
+    # Check if loan exists
+    result = db.execute(
+        text("""
+            SELECT id, member_id, amount, status
+            FROM loans
+            WHERE id = :loan_id
+        """),
+        {"loan_id": loan_id}
+    )
+    loan = result.fetchone()
+    
+    if not loan:
+        raise ValueError("Loan not found")
+    
+    # Delete all associated payments
+    db.execute(
+        text("""
+            DELETE FROM payments 
+            WHERE payment_type = 'loan_installment' 
+            AND description LIKE :pattern
+        """),
+        {"pattern": f"Loan #{loan_id} -%"}
+    )
+    
+    # Delete the loan
+    db.execute(
+        text("DELETE FROM loans WHERE id = :loan_id"),
+        {"loan_id": loan_id}
+    )
+    db.commit()
+    
+    return {
+        "message": "Loan and all associated payments deleted successfully",
+        "loan_id": loan_id,
+        "member_id": loan[1],
+        "amount": loan[2],
+        "status": loan[3]
+    }
+
+
+def create_loan_for_member(db: Session, phone: str, amount: float, interest_rate: float, 
+                           installments: int, start_date: str, description: str = None):
+    """Create and approve a loan for a member with custom start date (admin only)"""
+    from datetime import datetime, timedelta
+    from dateutil.relativedelta import relativedelta
+    import uuid
+    
+    # Check if member exists by phone
+    result = db.execute(
+        text("SELECT id, name, phone FROM users WHERE phone = :phone"),
+        {"phone": phone}
+    )
+    member = result.fetchone()
+    
+    if not member:
+        raise ValueError("Member not found with this phone number")
+    
+    member_id = member[0]
+    
+    # Parse start date
+    try:
+        loan_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError("Invalid date format. Use YYYY-MM-DD")
+    
+    # Calculate end date
+    end_date = loan_start + relativedelta(months=installments)
+    
+    # Create loan
+    result = db.execute(
+        text("""
+            INSERT INTO loans (member_id, amount, interest_rate, installments, status, 
+                             start_date, end_date, description)
+            VALUES (:member_id, :amount, :interest_rate, :installments, :status,
+                   :start_date, :end_date, :description)
+            RETURNING id, member_id, amount, interest_rate, installments, status, 
+                     start_date, end_date, description
+        """),
+        {
+            "member_id": member_id,
+            "amount": amount,
+            "interest_rate": interest_rate,
+            "installments": installments,
+            "status": "approved",
+            "start_date": loan_start,
+            "end_date": end_date,
+            "description": description
+        }
+    )
+    loan = result.fetchone()
+    loan_id = loan[0]
+    
+    # Calculate loan installments using reducing balance
+    from app.api.services.loan_service import calculate_loan
+    loan_calculation = calculate_loan(amount, interest_rate, installments, start_date)
+    
+    today = datetime.now().date()
+    paid_count = 0
+    pending_count = 0
+    
+    # Create all installment payments
+    for idx, installment in enumerate(loan_calculation["installment_breakdown"], 1):
+        transaction_id = f"LOAN-{loan_id}-INST-{idx}-{uuid.uuid4().hex[:8]}"
+        due_date_obj = datetime.strptime(installment['due_date'], "%Y-%m-%d").date()
+        
+        # Check if due date is before today
+        if due_date_obj < today:
+            # Mark as paid
+            payment_date = due_date_obj
+            total_pending = 0
+            paid_count += 1
+        else:
+            # Keep as pending
+            payment_date = None
+            total_pending = installment['total_payment']
+            pending_count += 1
+        
+        db.execute(
+            text("""
+                INSERT INTO payments 
+                (member_id, payment_type, total_loan_amount, description, payment_date,
+                 due_date, transaction_id, days_late, penalty_amount, total_pending_amount)
+                VALUES 
+                (:member_id, :payment_type, :total_loan_amount, :description, :payment_date,
+                 :due_date, :transaction_id, :days_late, :penalty_amount, :total_pending_amount)
+            """),
+            {
+                "member_id": member_id,
+                "payment_type": "loan_installment",
+                "total_loan_amount": amount,
+                "description": f"Loan #{loan_id} - Installment {idx}/{installments}",
+                "payment_date": payment_date,
+                "due_date": due_date_obj,
+                "transaction_id": transaction_id,
+                "days_late": 0,
+                "penalty_amount": 0.0,
+                "total_pending_amount": total_pending
+            }
+        )
+    
+    db.commit()
+    
+    return {
+        "message": "Loan created and approved successfully",
+        "loan": {
+            "id": loan[0],
+            "member_id": loan[1],
+            "member_name": member[1],
+            "member_phone": member[2],
+            "amount": loan[2],
+            "interest_rate": loan[3],
+            "installments": loan[4],
+            "status": loan[5],
+            "start_date": loan[6].strftime("%Y-%m-%d"),
+            "end_date": loan[7].strftime("%Y-%m-%d") if loan[7] else None,
+            "description": loan[8]
+        },
+        "installments_summary": {
+            "total": installments,
+            "paid": paid_count,
+            "pending": pending_count
+        }
+    }
+
+
+def get_member_installments_by_phone(db: Session, phone: str):
+    """Get all loan installments grouped by loan for a member by phone (admin only)"""
+    # Get member by phone
+    result = db.execute(
+        text("SELECT id, name, phone FROM users WHERE phone = :phone"),
+        {"phone": phone}
+    )
+    member = result.fetchone()
+    
+    if not member:
+        raise ValueError("Member not found with this phone number")
+    
+    member_id = member[0]
+    
+    # Get all loans for this member
+    result = db.execute(
+        text("""
+            SELECT id, member_id, amount, interest_rate, installments, 
+                   status, start_date, end_date, description
+            FROM loans
+            WHERE member_id = :member_id
+            ORDER BY start_date DESC
+        """),
+        {"member_id": member_id}
+    )
+    loans = result.fetchall()
+    
+    loans_with_installments = []
+    total_pending = 0
+    total_paid = 0
+    
+    for loan in loans:
+        loan_id = loan[0]
+        
+        # Get installments for this loan
+        result = db.execute(
+            text("""
+                SELECT id, member_id, payment_type, total_loan_amount, description,
+                       payment_date, due_date, transaction_id, days_late, 
+                       penalty_amount, total_pending_amount
+                FROM payments
+                WHERE member_id = :member_id 
+                AND payment_type = 'loan_installment'
+                AND description LIKE :pattern
+                ORDER BY due_date ASC
+            """),
+            {"member_id": member_id, "pattern": f"Loan #{loan_id} -%"}
+        )
+        installments = result.fetchall()
+        
+        pending = []
+        paid = []
+        
+        for inst in installments:
+            installment_data = {
+                "id": inst[0],
+                "member_id": inst[1],
+                "payment_type": inst[2],
+                "total_loan_amount": inst[3],
+                "description": inst[4],
+                "payment_date": inst[5].strftime("%Y-%m-%d") if inst[5] else None,
+                "due_date": inst[6].strftime("%Y-%m-%d") if inst[6] else None,
+                "transaction_id": inst[7],
+                "days_late": inst[8],
+                "penalty_amount": inst[9],
+                "total_pending_amount": inst[10],
+                "status": "paid" if inst[5] else "pending"
+            }
+            
+            if inst[5]:  # payment_date is not null
+                paid.append(installment_data)
+                total_paid += 1
+            else:
+                pending.append(installment_data)
+                total_pending += 1
+        
+        loans_with_installments.append({
+            "loan_id": loan[0],
+            "purpose": loan[8],
+            "loan_details": {
+                "amount": loan[2],
+                "interest_rate": loan[3],
+                "total_installments": loan[4],
+                "status": loan[5],
+                "start_date": loan[6].strftime("%Y-%m-%d") if loan[6] else None,
+                "end_date": loan[7].strftime("%Y-%m-%d") if loan[7] else None
+            },
+            "installments": {
+                "total": len(installments),
+                "pending_count": len(pending),
+                "paid_count": len(paid),
+                "pending": pending,
+                "paid": paid
+            }
+        })
+    
+    return {
+        "member": {
+            "id": member[0],
+            "name": member[1],
+            "phone": member[2]
+        },
+        "summary": {
+            "total_loans": len(loans),
+            "total_installments": total_pending + total_paid,
+            "total_pending": total_pending,
+            "total_paid": total_paid
+        },
+        "loans": loans_with_installments
     }

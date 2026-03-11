@@ -1,14 +1,15 @@
-from sqlalchemy.orm import Session
+import uuid
+from datetime import date, datetime, timedelta
+
+from dateutil.relativedelta import relativedelta
 from sqlalchemy import text
-from datetime import date, timedelta
+from sqlalchemy.orm import Session
+
+from app.api.config import MONTHLY_CONTRIBUTION, PENALTY_PER_DAY
+
 
 def approve_loan_application(db: Session, loan_id: int):
     """Approve a loan application and create payment installments"""
-    from datetime import datetime
-    from dateutil.relativedelta import relativedelta
-    import uuid
-    
-    # Check if loan exists
     result = db.execute(
         text("SELECT id, member_id, amount, interest_rate, installments, status, start_date FROM loans WHERE id = :loan_id"),
         {"loan_id": loan_id}
@@ -26,49 +27,42 @@ def approve_loan_application(db: Session, loan_id: int):
     installments = loan[4]
     start_date = loan[6] if loan[6] else date.today()
 
-    # Calculate loan details using the calculate_loan function
     loan_calculation = calculate_loan(loan_amount, interest_rate, installments, start_date.strftime("%Y-%m-%d"))
-    
-    # Update loan status to approved
+
     db.execute(
         text("UPDATE loans SET status = 'approved' WHERE id = :loan_id"),
         {"loan_id": loan_id}
     )
-    
-    # Insert all installments into payments table
+
     for idx, installment in enumerate(loan_calculation["installment_breakdown"], 1):
         due_date_obj = datetime.strptime(installment['due_date'], "%Y-%m-%d").date()
-        
-        # Generate unique transaction_id manually to avoid trigger conflicts
         transaction_id = f"LOAN-{loan_id}-INST-{idx}-{uuid.uuid4().hex[:8]}"
-        
-        insert_query = text("""
-            INSERT INTO payments 
-            (member_id, payment_type, total_loan_amount, description, payment_date,
-             due_date, transaction_id, days_late, penalty_amount, total_pending_amount)
-            VALUES 
-            (:member_id, :payment_type, :total_loan_amount, :description, :payment_date,
-             :due_date, :transaction_id, :days_late, :penalty_amount, :total_pending_amount)
-        """)
-        
-        params = {
-            "member_id": int(loan[1]),
-            "payment_type": str("loan_installment"),
-            "total_loan_amount": float(loan_amount),
-            "description": str(f"Loan #{loan_id} - Installment {idx}/{installments}"),
-            "payment_date": None,
-            "due_date": due_date_obj,
-            "transaction_id": transaction_id,
-            "days_late": int(0),
-            "penalty_amount": float(0.0),
-            "total_pending_amount": float(installment['total_payment'])
-        }
-        
-        db.execute(insert_query, params)
-    
+
+        db.execute(
+            text("""
+                INSERT INTO payments
+                (member_id, payment_type, total_loan_amount, description, payment_date,
+                 due_date, transaction_id, days_late, penalty_amount, total_pending_amount)
+                VALUES
+                (:member_id, :payment_type, :total_loan_amount, :description, :payment_date,
+                 :due_date, :transaction_id, :days_late, :penalty_amount, :total_pending_amount)
+            """),
+            {
+                "member_id": int(loan[1]),
+                "payment_type": "loan_installment",
+                "total_loan_amount": float(loan_amount),
+                "description": f"Loan #{loan_id} - Installment {idx}/{installments}",
+                "payment_date": None,
+                "due_date": due_date_obj,
+                "transaction_id": transaction_id,
+                "days_late": 0,
+                "penalty_amount": 0.0,
+                "total_pending_amount": float(installment['total_payment'])
+            }
+        )
+
     db.commit()
 
-    # Get updated loan details
     result = db.execute(
         text("""
             SELECT id, member_id, amount, interest_rate, installments, status, start_date, end_date, description
@@ -91,10 +85,8 @@ def approve_loan_application(db: Session, loan_id: int):
     }
 
 
-
 def apply_for_loan(db: Session, user_id: int, loan_data):
     """Apply for a loan"""
-    # Check if user has an active loan
     result = db.execute(
         text("""
             SELECT id, total_amount, pending_installments, total_penalty, pending_amount
@@ -106,24 +98,22 @@ def apply_for_loan(db: Session, user_id: int, loan_data):
         {"member_id": user_id}
     )
     active_loan = result.fetchone()
-    
+
     if active_loan:
         loan_id, total_amount, pending_installments, total_penalty, pending_amount = active_loan
-        
+
         paid_amount = total_amount - pending_amount
         completion_percentage = (paid_amount / total_amount * 100) if total_amount > 0 else 0
-        
+
         if completion_percentage < 50:
             raise ValueError(
                 f"Cannot apply for new loan. Previous loan is only {completion_percentage:.1f}% completed. "
                 f"Must complete at least 50% before applying for a new loan."
             )
-    
-    # Calculate end date based on installments (assuming monthly)
+
     start_date = date.today()
     end_date = start_date + timedelta(days=30 * loan_data.installments)
-    
-    # Insert loan application
+
     result = db.execute(
         text("""
             INSERT INTO loans (member_id, amount, interest_rate, installments, status, start_date, end_date, description)
@@ -142,7 +132,7 @@ def apply_for_loan(db: Session, user_id: int, loan_data):
         }
     )
     db.commit()
-    
+
     loan = result.fetchone()
     return {
         "id": loan[0],
@@ -157,19 +147,18 @@ def apply_for_loan(db: Session, user_id: int, loan_data):
     }
 
 
-
 def get_all_loans(db: Session):
     """Get all loans (admin only)"""
     result = db.execute(
         text("""
-            SELECT id, member_id, amount, interest_rate, installments, status, 
+            SELECT id, member_id, amount, interest_rate, installments, status,
                    start_date, end_date, description
             FROM loans
             ORDER BY id DESC
         """)
     )
     loans = result.fetchall()
-    
+
     return [
         {
             "id": loan[0],
@@ -186,20 +175,15 @@ def get_all_loans(db: Session):
     ]
 
 
-
 def calculate_loan(amount: float, interest_rate: float, installments: int, start_date: str = None):
     """Calculate loan details with reducing balance interest method"""
-    from datetime import datetime
-    from dateutil.relativedelta import relativedelta
-    
     if amount <= 0:
         raise ValueError("Loan amount must be greater than 0")
     if installments <= 0:
         raise ValueError("Installments must be greater than 0")
     if interest_rate < 0:
         raise ValueError("Interest rate cannot be negative")
-    
-    # Parse start date or use today
+
     if start_date:
         try:
             loan_start = datetime.strptime(start_date, "%Y-%m-%d").date()
@@ -207,30 +191,25 @@ def calculate_loan(amount: float, interest_rate: float, installments: int, start
             raise ValueError("Invalid date format. Use YYYY-MM-DD")
     else:
         loan_start = datetime.now().date()
-    
-    # Calculate first due date (10th of next month)
+
     if loan_start.day <= 10:
         first_due_date = loan_start.replace(day=10)
     else:
         first_due_date = (loan_start + relativedelta(months=1)).replace(day=10)
-    
-    # Calculate using reducing balance method
+
     monthly_interest_rate = interest_rate / 100
     principal_per_month = amount / installments
-    
+
     total_interest = 0
     remaining_balance = amount
     installment_details = []
     current_due_date = first_due_date
-    
+
     for month in range(1, installments + 1):
-        # Interest on remaining balance
         interest_for_month = remaining_balance * monthly_interest_rate
         total_interest += interest_for_month
-        
-        # Total payment for this month
         monthly_payment = principal_per_month + interest_for_month
-        
+
         installment_details.append({
             "month": month,
             "due_date": current_due_date.strftime("%Y-%m-%d"),
@@ -239,18 +218,13 @@ def calculate_loan(amount: float, interest_rate: float, installments: int, start
             "total_payment": round(monthly_payment, 2),
             "remaining_balance": round(remaining_balance - principal_per_month, 2)
         })
-        
-        # Reduce balance
+
         remaining_balance -= principal_per_month
-        
-        # Next due date (10th of next month)
         current_due_date = (current_due_date + relativedelta(months=1)).replace(day=10)
-    
+
     total_amount = amount + total_interest
-    
-    # Extract all due dates
     all_due_dates = [installment["due_date"] for installment in installment_details]
-    
+
     return {
         "principal_amount": amount,
         "interest_rate": interest_rate,
@@ -267,20 +241,9 @@ def calculate_loan(amount: float, interest_rate: float, installments: int, start
 
 def process_monthly_contribution(db: Session, member_id: int, payment_transaction_id: str):
     """Process monthly contribution payment of ₹1000"""
-    from datetime import datetime
-    from dateutil.relativedelta import relativedelta
-
-    MONTHLY_CONTRIBUTION = 1000.0
-    PENALTY_PER_DAY = 10.0
-
     today = date.today()
     current_month = today.replace(day=1)
     due_date = current_month.replace(day=10)
-
-    if today.day < 10:
-        due_date = current_month.replace(day=10)
-    else:
-        due_date = current_month.replace(day=10)
 
     result = db.execute(
         text("""
@@ -346,13 +309,8 @@ def process_monthly_contribution(db: Session, member_id: int, payment_transactio
     }
 
 
-
-
 def pay_loan_installment(db: Session, member_id: int, installment_id: int, payment_transaction_id: str):
     """Pay a loan installment"""
-    from datetime import datetime
-    
-    # Get installment details
     result = db.execute(
         text("""
             SELECT id, member_id, total_pending_amount, due_date, payment_date, payment_type
@@ -362,31 +320,28 @@ def pay_loan_installment(db: Session, member_id: int, installment_id: int, payme
         {"installment_id": installment_id, "member_id": member_id}
     )
     installment = result.fetchone()
-    
+
     if not installment:
         raise ValueError("Installment not found or does not belong to you")
-    
+
     if installment[4] is not None:
         raise ValueError("Installment already paid")
-    
+
     if installment[5] != "loan_installment":
         raise ValueError("This is not a loan installment")
-    
+
     today = date.today()
     due_date = installment[3]
-    
-    # Calculate penalty if late
+
     days_late = 0
     penalty_amount = 0.0
-    PENALTY_PER_DAY = 10.0
-    
+
     if today > due_date:
         penalty_start_date = due_date + timedelta(days=1)
         if today >= penalty_start_date:
             days_late = (today - due_date).days
             penalty_amount = days_late * PENALTY_PER_DAY
-    
-    # Update payment record
+
     db.execute(
         text("""
             UPDATE payments
@@ -405,9 +360,9 @@ def pay_loan_installment(db: Session, member_id: int, installment_id: int, payme
             "installment_id": installment_id
         }
     )
-    
+
     db.commit()
-    
+
     return {
         "message": "Loan installment paid successfully",
         "installment_id": installment_id,
@@ -426,7 +381,7 @@ def get_all_installments(db: Session, member_id: int):
     result = db.execute(
         text("""
             SELECT id, member_id, payment_type, total_loan_amount, description,
-                   payment_date, due_date, transaction_id, days_late, 
+                   payment_date, due_date, transaction_id, days_late,
                    penalty_amount, total_pending_amount
             FROM payments
             WHERE member_id = :member_id AND payment_type = 'loan_installment'
@@ -435,10 +390,10 @@ def get_all_installments(db: Session, member_id: int):
         {"member_id": member_id}
     )
     installments = result.fetchall()
-    
+
     pending = []
     paid = []
-    
+
     for inst in installments:
         installment_data = {
             "id": inst[0],
@@ -454,12 +409,12 @@ def get_all_installments(db: Session, member_id: int):
             "total_pending_amount": inst[10],
             "status": "paid" if inst[5] else "pending"
         }
-        
-        if inst[5]:  # payment_date is not null
+
+        if inst[5]:
             paid.append(installment_data)
         else:
             pending.append(installment_data)
-    
+
     return {
         "total_installments": len(installments),
         "pending_count": len(pending),
@@ -471,19 +426,16 @@ def get_all_installments(db: Session, member_id: int):
 
 def get_member_earnings(db: Session, member_id: int):
     """Calculate member's share of earnings from interest and penalties"""
-    
-    # Get total active members count
     result = db.execute(
         text("""
             SELECT COUNT(*) FROM users WHERE is_active = true AND is_admin = false
         """)
     )
     total_members = result.fetchone()[0]
-    
+
     if total_members == 0:
         raise ValueError("No active members found")
-    
-    # Get all approved loans with their details
+
     result = db.execute(
         text("""
             SELECT id, amount, interest_rate, installments
@@ -492,38 +444,34 @@ def get_member_earnings(db: Session, member_id: int):
         """)
     )
     loans = result.fetchall()
-    
+
     total_interest_earned = 0
-    
-    # Calculate interest for each loan using reducing balance method
+
     for loan in loans:
         loan_id, amount, interest_rate, installments = loan
-        
-        # Count how many installments have been paid for this loan
+
         result = db.execute(
             text("""
-                SELECT COUNT(*) 
-                FROM payments 
-                WHERE payment_type = 'loan_installment' 
+                SELECT COUNT(*)
+                FROM payments
+                WHERE payment_type = 'loan_installment'
                 AND description LIKE :pattern
                 AND payment_date IS NOT NULL
             """),
             {"pattern": f"Loan #{loan_id} -%"}
         )
         paid_count = result.fetchone()[0]
-        
+
         if paid_count > 0:
-            # Calculate interest using reducing balance
             monthly_interest_rate = interest_rate / 100
             principal_per_month = amount / installments
             remaining_balance = amount
-            
+
             for month in range(1, paid_count + 1):
                 interest_for_month = remaining_balance * monthly_interest_rate
                 total_interest_earned += interest_for_month
                 remaining_balance -= principal_per_month
-    
-    # Get total penalties collected
+
     result = db.execute(
         text("""
             SELECT COALESCE(SUM(penalty_amount), 0) as total_penalties
@@ -532,13 +480,11 @@ def get_member_earnings(db: Session, member_id: int):
         """)
     )
     total_penalties = result.fetchone()[0]
-    
-    # Calculate per member share
+
     interest_per_member = total_interest_earned / total_members if total_members > 0 else 0
     penalty_per_member = total_penalties / total_members if total_members > 0 else 0
     total_earning_per_member = interest_per_member + penalty_per_member
-    
-    # Get member's own penalty paid (to show separately)
+
     result = db.execute(
         text("""
             SELECT COALESCE(SUM(penalty_amount), 0) as my_penalties
@@ -548,7 +494,7 @@ def get_member_earnings(db: Session, member_id: int):
         {"member_id": member_id}
     )
     member_penalty_paid = result.fetchone()[0]
-    
+
     return {
         "member_id": member_id,
         "total_active_members": total_members,
