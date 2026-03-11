@@ -199,3 +199,18 @@ async def get_member_installments(
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+@router.get("/member-earnings/{phone}")
+async def get_admin_member_earnings(
+    phone: str,
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """Get earnings for a specific member by phone"""
+    from app.api.services.loan_service import get_member_earnings
+    from sqlalchemy import text
+    user = db.execute(text("SELECT id FROM users WHERE phone = :phone"), {"phone": phone}).fetchone()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    result = get_member_earnings(db, user.id)
+    return result
