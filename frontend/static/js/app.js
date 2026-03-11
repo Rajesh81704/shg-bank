@@ -3,7 +3,7 @@
    ============================================================ */
 
 const API = '/api';
-const state = { token: localStorage.getItem('token'), user: null, view: 'dashboard' };
+const state = { token: localStorage.getItem('token'), user: null, view: 'dashboard', lang: localStorage.getItem('lang') || 'en' };
 
 const ICONS = {
     dashboard: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
@@ -35,13 +35,87 @@ const initials = name => (name||'?').split(' ').map(w=>w[0]).join('').toUpperCas
 const avatarColors = ['avatar-purple','avatar-green','avatar-amber','avatar-red'];
 const getAvatarClass = id => avatarColors[(id||0) % avatarColors.length];
 
+// ---- i18n Translation System ----
+function t(key) {
+    return (translations[state.lang] && translations[state.lang][key]) || translations['en'][key] || key;
+}
+
+function applyStaticTranslations() {
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        el.textContent = t(el.getAttribute('data-i18n'));
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+    });
+}
+
+const LANG_LABELS = { en: 'EN', hi: 'HI', ta: 'TA' };
+
+function setupLangToggle(toggleId, btnId, dropdownId, labelId) {
+    const toggle = $(toggleId);
+    const toggleBtn = $(btnId);
+    const dropdown = $(dropdownId);
+    const label = $(labelId);
+    if (!toggle || !toggleBtn || !dropdown || !label) return;
+
+    label.textContent = LANG_LABELS[state.lang];
+    dropdown.querySelectorAll('.lang-option').forEach(opt => {
+        opt.classList.toggle('active', opt.dataset.lang === state.lang);
+    });
+
+    toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.toggle('hidden');
+        toggle.classList.toggle('open');
+    });
+
+    dropdown.querySelectorAll('.lang-option').forEach(opt => {
+        opt.addEventListener('click', () => {
+            const lang = opt.dataset.lang;
+            if (lang === state.lang) { dropdown.classList.add('hidden'); toggle.classList.remove('open'); return; }
+            state.lang = lang;
+            localStorage.setItem('lang', lang);
+            document.documentElement.lang = lang;
+            syncAllLangToggles(lang);
+            dropdown.classList.add('hidden');
+            toggle.classList.remove('open');
+            applyStaticTranslations();
+            if (state.user) {
+                buildSidebar();
+                navigate(state.view);
+            }
+        });
+    });
+
+    document.addEventListener('click', () => {
+        dropdown.classList.add('hidden');
+        toggle.classList.remove('open');
+    });
+}
+
+function syncAllLangToggles(lang) {
+    ['langToggleLabel', 'loginLangToggleLabel'].forEach(id => {
+        const el = $(id);
+        if (el) el.textContent = LANG_LABELS[lang];
+    });
+    ['langDropdown', 'loginLangDropdown'].forEach(id => {
+        const el = $(id);
+        if (el) el.querySelectorAll('.lang-option').forEach(o => o.classList.toggle('active', o.dataset.lang === lang));
+    });
+}
+
+function initLanguageToggle() {
+    setupLangToggle('langToggle', 'langToggleBtn', 'langDropdown', 'langToggleLabel');
+    setupLangToggle('loginLangToggle', 'loginLangToggleBtn', 'loginLangDropdown', 'loginLangToggleLabel');
+}
+
 function showToast(msg, type='info') {
     const c = $('toastContainer');
-    const t = document.createElement('div');
-    t.className = `toast toast-${type}`;
-    t.textContent = msg;
-    c.appendChild(t);
-    setTimeout(() => { t.classList.add('toast-exit'); setTimeout(() => t.remove(), 300); }, 3500);
+    const el = document.createElement('div');
+    el.className = `toast toast-${type}`;
+    el.textContent = msg;
+    c.appendChild(el);
+    setTimeout(() => { el.classList.add('toast-exit'); setTimeout(() => el.remove(), 300); }, 3500);
 }
 
 function openModal(title, bodyHTML) {
@@ -85,26 +159,29 @@ const api = {
     financialSummary: () => apiFetch('/financial_summary'),
 };
 
-// ---- Navigation Config ----
+// ---- Navigation Config (use i18n keys for labels) ----
 const adminNav = [
-    { id:'dashboard', label:'Dashboard', icon:'dashboard' },
-    { id:'members', label:'Members', icon:'members' },
-    { id:'loans', label:'All Loans', icon:'loans' },
-    { id:'financialSummary', label:'Financial Summary', icon:'summary' },
-    { id:'calculator', label:'EMI Calculator', icon:'calculator' },
-    { id:'resetPassword', label:'Reset Password', icon:'resetPw' },
+    { id:'dashboard', labelKey:'nav.dashboard', icon:'dashboard' },
+    { id:'members', labelKey:'nav.members', icon:'members' },
+    { id:'loans', labelKey:'nav.all_loans', icon:'loans' },
+    { id:'financialSummary', labelKey:'nav.financial_summary', icon:'summary' },
+    { id:'calculator', labelKey:'nav.emi_calculator', icon:'calculator' },
+    { id:'resetPassword', labelKey:'nav.reset_password', icon:'resetPw' },
 ];
 const userNav = [
-    { id:'dashboard', label:'Dashboard', icon:'dashboard' },
-    { id:'myInstallments', label:'My Installments', icon:'installments' },
-    { id:'applyLoan', label:'Apply for Loan', icon:'apply' },
-    { id:'calculator', label:'EMI Calculator', icon:'calculator' },
-    { id:'payContribution', label:'Pay Contribution', icon:'contribution' },
-    { id:'myEarnings', label:'My Earnings', icon:'earnings' },
+    { id:'dashboard', labelKey:'nav.dashboard', icon:'dashboard' },
+    { id:'myInstallments', labelKey:'nav.my_installments', icon:'installments' },
+    { id:'applyLoan', labelKey:'nav.apply_loan', icon:'apply' },
+    { id:'calculator', labelKey:'nav.emi_calculator', icon:'calculator' },
+    { id:'payContribution', labelKey:'nav.pay_contribution', icon:'contribution' },
+    { id:'myEarnings', labelKey:'nav.my_earnings', icon:'earnings' },
 ];
 
 // ---- Initialize App ----
 document.addEventListener('DOMContentLoaded', () => {
+    applyStaticTranslations();
+    initLanguageToggle();
+
     if (state.token) { showApp(); } else { showLogin(); }
 
     $('loginForm').addEventListener('submit', handleLogin);
@@ -128,7 +205,7 @@ async function handleLogin(e) {
     e.preventDefault();
     const btn = $('loginBtn'), errEl = $('loginError');
     const phone = $('loginPhone').value.trim(), pw = $('loginPassword').value;
-    btn.disabled = true; btn.querySelector('.btn-text').textContent = 'Signing in...';
+    btn.disabled = true; btn.querySelector('.btn-text').textContent = t('login.signing_in');
     errEl.classList.add('hidden');
     try {
         const res = await api.login(phone, pw);
@@ -140,7 +217,7 @@ async function handleLogin(e) {
     } catch(err) {
         errEl.textContent = err.message; errEl.classList.remove('hidden');
     } finally {
-        btn.disabled = false; btn.querySelector('.btn-text').textContent = 'Sign In';
+        btn.disabled = false; btn.querySelector('.btn-text').textContent = t('login.sign_in');
     }
 }
 
@@ -153,6 +230,7 @@ function logout() {
 function showLogin() {
     $('loginPage').classList.remove('hidden');
     $('mainApp').classList.add('hidden');
+    applyStaticTranslations();
 }
 
 async function showApp() {
@@ -179,9 +257,9 @@ function updateUserUI() {
 function buildSidebar() {
     const items = state.user.role === 'admin' ? adminNav : userNav;
     const nav = $('sidebarNav');
-    nav.innerHTML = '<div class="nav-section-title">Menu</div>' + items.map(it =>
+    nav.innerHTML = '<div class="nav-section-title">' + t('nav.menu') + '</div>' + items.map(it =>
         `<button class="nav-item${state.view===it.id?' active':''}" data-view="${it.id}">
-            <span class="nav-icon">${ICONS[it.icon]}</span><span>${it.label}</span>
+            <span class="nav-icon">${ICONS[it.icon]}</span><span>${t(it.labelKey)}</span>
         </button>`
     ).join('');
     nav.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => {
@@ -193,12 +271,12 @@ function buildSidebar() {
 function navigate(view, data) {
     state.view = view;
     document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === view));
-    const titles = { dashboard:'Dashboard', members:'Members', loans:'All Loans', resetPassword:'Reset Password',
-        financialSummary:'Financial Summary', myInstallments:'My Installments', applyLoan:'Apply for Loan',
-        calculator:'EMI Calculator', payContribution:'Pay Contribution', memberDetail:'Member Details',
-        myEarnings:'My Earnings' };
-    $('pageTitle').textContent = titles[view] || 'Dashboard';
-    $('pageSubtitle').textContent = view === 'dashboard' ? 'Welcome back!' : 'Manage your SHG banking';
+    const titleKeys = { dashboard:'page.dashboard', members:'page.members', loans:'page.all_loans', resetPassword:'page.reset_password',
+        financialSummary:'page.financial_summary', myInstallments:'page.my_installments', applyLoan:'page.apply_loan',
+        calculator:'page.emi_calculator', payContribution:'page.pay_contribution', memberDetail:'page.member_details',
+        myEarnings:'page.my_earnings' };
+    $('pageTitle').textContent = t(titleKeys[view] || 'page.dashboard');
+    $('pageSubtitle').textContent = view === 'dashboard' ? t('page.welcome_back') : t('page.manage_shg');
 
     const content = $('contentArea');
     content.innerHTML = '<div class="skeleton skeleton-card" style="height:200px;margin-bottom:16px"></div>';
@@ -226,25 +304,25 @@ async function renderAdminDashboard() {
         const st = summary.statistics;
         c.innerHTML = `
         <div class="stats-grid">
-            ${statCard('Total Collection', formatCurrency(s.total_collection), `${st.total_contribution_payments + st.total_emi_payments} payments`, 'purple', ICONS.wallet)}
-            ${statCard('Loans Disbursed', formatCurrency(s.total_loans_disbursed), `${st.total_loans_approved} loans approved`, 'green', ICONS.money)}
-            ${statCard('Available Amount', formatCurrency(s.available_amount), 'Net balance', 'blue', ICONS.wallet)}
-            ${statCard('Total Penalties', formatCurrency(s.total_penalties), `${st.members_with_penalties} members penalized`, 'red', ICONS.alert)}
+            ${statCard(t('admin.total_collection'), formatCurrency(s.total_collection), `${st.total_contribution_payments + st.total_emi_payments} ${t('common.payments')}`, 'purple', ICONS.wallet)}
+            ${statCard(t('admin.loans_disbursed'), formatCurrency(s.total_loans_disbursed), `${st.total_loans_approved} ${t('common.loans_approved')}`, 'green', ICONS.money)}
+            ${statCard(t('admin.available_amount'), formatCurrency(s.available_amount), t('admin.net_balance'), 'blue', ICONS.wallet)}
+            ${statCard(t('admin.total_penalties'), formatCurrency(s.total_penalties), `${st.members_with_penalties} ${t('common.members_penalized')}`, 'red', ICONS.alert)}
         </div>
         <div class="stats-grid">
-            ${statCard('Contributions', formatCurrency(s.total_contributions), `${st.total_contribution_payments} payments`, 'purple', ICONS.contribution)}
-            ${statCard('EMI Collected', formatCurrency(s.total_emi_collected), `${st.total_emi_payments} payments`, 'green', ICONS.payments)}
-            ${statCard('Pending EMIs', formatCurrency(s.pending_emi_amount), `${st.pending_emi_count} installments`, 'amber', ICONS.clock)}
+            ${statCard(t('admin.contributions'), formatCurrency(s.total_contributions), `${st.total_contribution_payments} ${t('common.payments')}`, 'purple', ICONS.contribution)}
+            ${statCard(t('admin.emi_collected'), formatCurrency(s.total_emi_collected), `${st.total_emi_payments} ${t('common.payments')}`, 'green', ICONS.payments)}
+            ${statCard(t('admin.pending_emis'), formatCurrency(s.pending_emi_amount), `${st.pending_emi_count} ${t('installments.installments')}`, 'amber', ICONS.clock)}
         </div>
         <div class="card">
-            <div class="card-header"><h3 class="card-title">Quick Actions</h3></div>
+            <div class="card-header"><h3 class="card-title">${t('admin.quick_actions')}</h3></div>
             <div class="card-body" style="display:flex;gap:12px;flex-wrap:wrap">
-                <button class="btn btn-primary" onclick="navigate('members')">👥 View Members</button>
-                <button class="btn btn-success" onclick="showCreateUserModal()">➕ Add Member</button>
-                <button class="btn btn-secondary" onclick="navigate('loans')">💰 Manage Loans</button>
-                <button class="btn btn-secondary" onclick="navigate('financialSummary')">📊 Financial Summary</button>
-                <button class="btn btn-secondary" onclick="navigate('calculator')">🧮 EMI Calculator</button>
-                <button class="btn btn-secondary" onclick="navigate('resetPassword')">🔑 Reset Password</button>
+                <button class="btn btn-primary" onclick="navigate('members')">${t('admin.view_members')}</button>
+                <button class="btn btn-success" onclick="showCreateUserModal()">${t('admin.add_member')}</button>
+                <button class="btn btn-secondary" onclick="navigate('loans')">${t('admin.manage_loans')}</button>
+                <button class="btn btn-secondary" onclick="navigate('financialSummary')">${t('admin.financial_summary')}</button>
+                <button class="btn btn-secondary" onclick="navigate('calculator')">${t('admin.emi_calculator')}</button>
+                <button class="btn btn-secondary" onclick="navigate('resetPassword')">${t('admin.reset_password')}</button>
             </div>
         </div>`;
     } catch(e) { c.innerHTML = errorHTML(e.message); }
@@ -258,17 +336,17 @@ async function renderMembers() {
     const c = $('contentArea');
     c.innerHTML = `
     <div class="section-header">
-        <h2 class="section-title">Member Lookup</h2>
-        <button class="btn btn-primary btn-sm" onclick="showCreateUserModal()">+ Add Member</button>
+        <h2 class="section-title">${t('members.lookup')}</h2>
+        <button class="btn btn-primary btn-sm" onclick="showCreateUserModal()">${t('members.add')}</button>
     </div>
     <div class="card form-card" style="max-width:100%">
         <div class="card-body">
             <form id="memberSearchForm" style="display:flex;gap:12px;align-items:flex-end">
                 <div class="form-group-content" style="flex:1;margin-bottom:0">
-                    <label>Phone Number</label>
-                    <input class="form-input" type="tel" id="memberSearchPhone" placeholder="Enter member phone number" required>
+                    <label>${t('members.phone_label')}</label>
+                    <input class="form-input" type="tel" id="memberSearchPhone" placeholder="${t('members.phone_placeholder')}" required>
                 </div>
-                <button type="submit" class="btn btn-primary" style="height:38px">Search</button>
+                <button type="submit" class="btn btn-primary" style="height:38px">${t('members.search')}</button>
             </form>
         </div>
     </div>
@@ -283,7 +361,7 @@ async function renderMembers() {
             const u = await api.userDetails(phone);
             resultDiv.innerHTML = renderMemberCard(u);
         } catch(err) {
-            resultDiv.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">${ICONS.alert}<h3>Member not found</h3><p>${err.message}</p></div></div></div>`;
+            resultDiv.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">${ICONS.alert}<h3>${t('members.not_found')}</h3><p>${err.message}</p></div></div></div>`;
         }
     });
 }
@@ -291,23 +369,23 @@ async function renderMembers() {
 function renderMemberCard(u) {
     return `
     <div class="card section-gap">
-        <div class="card-header"><h3 class="card-title">Member Profile</h3></div>
+        <div class="card-header"><h3 class="card-title">${t('members.profile')}</h3></div>
         <div class="card-body">
             <div class="detail-header" style="margin-bottom:16px">
                 <div class="detail-avatar">${initials(u.name)}</div>
                 <div><div class="detail-name">${u.name}</div><div class="detail-phone">${u.phone}</div></div>
-                <div style="margin-left:auto">${u.is_active ? '<span class="badge badge-success"><span class="badge-dot"></span>Active</span>' : '<span class="badge badge-danger"><span class="badge-dot"></span>Inactive</span>'}</div>
+                <div style="margin-left:auto">${u.is_active ? `<span class="badge badge-success"><span class="badge-dot"></span>${t('badge.active')}</span>` : `<span class="badge badge-danger"><span class="badge-dot"></span>${t('badge.inactive')}</span>`}</div>
             </div>
             <div class="info-grid">
-                <div class="info-item"><div class="info-label">Member ID</div><div class="info-value">${u.id}</div></div>
-                <div class="info-item"><div class="info-label">Phone</div><div class="info-value">${u.phone}</div></div>
-                <div class="info-item"><div class="info-label">Join Date</div><div class="info-value">${formatDate(u.join_date)}</div></div>
-                <div class="info-item"><div class="info-label">Role</div><div class="info-value">${u.is_admin?'Admin':'Member'}</div></div>
+                <div class="info-item"><div class="info-label">${t('members.id')}</div><div class="info-value">${u.id}</div></div>
+                <div class="info-item"><div class="info-label">${t('members.phone')}</div><div class="info-value">${u.phone}</div></div>
+                <div class="info-item"><div class="info-label">${t('members.join_date')}</div><div class="info-value">${formatDate(u.join_date)}</div></div>
+                <div class="info-item"><div class="info-label">${t('members.role')}</div><div class="info-value">${u.is_admin?t('members.admin'):t('members.member')}</div></div>
             </div>
         </div>
     </div>
-    ${renderPaymentTable(u.payment_history, 'Payment History')}
-    ${renderLoanTable(u.loan_history, 'Loan History')}`;
+    ${renderPaymentTable(u.payment_history, t('common.payment_history'))}
+    ${renderLoanTable(u.loan_history, t('common.loan_history'))}`;
 }
 
 async function renderLoans() {
@@ -316,16 +394,16 @@ async function renderLoans() {
         const loans = await api.allLoans();
         const pending = loans.filter(l=>l.status==='pending').length;
         c.innerHTML = `
-        <div class="section-header"><h2 class="section-title">${loans.length} Loans ${pending?`<span class="badge badge-warning" style="margin-left:8px"><span class="badge-dot"></span>${pending} Pending</span>`:''}</h2></div>
+        <div class="section-header"><h2 class="section-title">${loans.length} ${t('nav.all_loans')} ${pending?`<span class="badge badge-warning" style="margin-left:8px"><span class="badge-dot"></span>${pending} ${t('loans.pending')}</span>`:''}</h2></div>
         <div class="card"><div class="card-body no-padding"><div class="table-wrapper">
             <table class="data-table"><thead><tr>
-                <th>ID</th><th>Member</th><th>Amount</th><th>Rate</th><th>EMIs</th><th>Status</th><th>Start</th><th>Action</th>
+                <th>${t('table.id')}</th><th>${t('table.member')}</th><th>${t('table.amount')}</th><th>${t('table.rate')}</th><th>${t('table.emis')}</th><th>${t('table.status')}</th><th>${t('table.start')}</th><th>${t('table.action')}</th>
             </tr></thead><tbody>
-            ${loans.length === 0 ? '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--gray-400)">No loans found</td></tr>' : loans.map(l=>`<tr>
+            ${loans.length === 0 ? `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--gray-400)">${t('loans.no_loans')}</td></tr>` : loans.map(l=>`<tr>
                 <td class="cell-primary">#${l.id}</td><td>${l.member_id}</td><td class="cell-primary">${formatCurrency(l.amount)}</td>
                 <td>${l.interest_rate}%</td><td>${l.installments}</td>
                 <td>${statusBadge(l.status)}</td><td>${formatDate(l.start_date)}</td>
-                <td>${l.status==='pending'?`<button class="btn btn-success btn-sm" onclick="handleApproveLoan(${l.id})">${ICONS.check} Approve</button>`:'-'}</td>
+                <td>${l.status==='pending'?`<button class="btn btn-success btn-sm" onclick="handleApproveLoan(${l.id})">${ICONS.check} ${t('loans.approve')}</button>`:'-'}</td>
             </tr>`).join('')}
             </tbody></table>
         </div></div></div>`;
@@ -333,8 +411,8 @@ async function renderLoans() {
 }
 
 async function handleApproveLoan(id) {
-    if(!confirm('Approve this loan? This will create payment installments.')) return;
-    try { await api.approveLoan(id); showToast('Loan approved successfully!','success'); renderLoans(); }
+    if(!confirm(t('loans.approve_confirm'))) return;
+    try { await api.approveLoan(id); showToast(t('loans.approved_success'),'success'); renderLoans(); }
     catch(e) { showToast(e.message,'error'); }
 }
 
@@ -347,40 +425,40 @@ async function renderFinancialSummary() {
         const penalties = data.members_with_penalties || [];
         c.innerHTML = `
         <div class="stats-grid">
-            ${statCard('Total Collection', formatCurrency(s.total_collection), 'All income', 'purple', ICONS.wallet)}
-            ${statCard('Loans Disbursed', formatCurrency(s.total_loans_disbursed), `${st.total_loans_approved} loans`, 'red', ICONS.money)}
-            ${statCard('Available Amount', formatCurrency(s.available_amount), 'Net balance', 'green', ICONS.wallet)}
+            ${statCard(t('admin.total_collection'), formatCurrency(s.total_collection), t('financial.all_income'), 'purple', ICONS.wallet)}
+            ${statCard(t('admin.loans_disbursed'), formatCurrency(s.total_loans_disbursed), `${st.total_loans_approved} ${t('common.loans')}`, 'red', ICONS.money)}
+            ${statCard(t('admin.available_amount'), formatCurrency(s.available_amount), t('admin.net_balance'), 'green', ICONS.wallet)}
         </div>
         <div class="card section-gap">
-            <div class="card-header"><h3 class="card-title">Detailed Breakdown</h3></div>
+            <div class="card-header"><h3 class="card-title">${t('financial.detailed_breakdown')}</h3></div>
             <div class="card-body">
                 <div class="info-grid">
-                    <div class="info-item"><div class="info-label">Total Contributions</div><div class="info-value">${formatCurrency(s.total_contributions)}</div></div>
-                    <div class="info-item"><div class="info-label">Total EMI Collected</div><div class="info-value">${formatCurrency(s.total_emi_collected)}</div></div>
-                    <div class="info-item"><div class="info-label">Contribution Penalties</div><div class="info-value">${formatCurrency(s.contribution_penalties)}</div></div>
-                    <div class="info-item"><div class="info-label">EMI Penalties</div><div class="info-value">${formatCurrency(s.emi_penalties)}</div></div>
-                    <div class="info-item"><div class="info-label">Total Penalties</div><div class="info-value">${formatCurrency(s.total_penalties)}</div></div>
-                    <div class="info-item"><div class="info-label">Pending EMI Amount</div><div class="info-value">${formatCurrency(s.pending_emi_amount)}</div></div>
+                    <div class="info-item"><div class="info-label">${t('financial.total_contributions')}</div><div class="info-value">${formatCurrency(s.total_contributions)}</div></div>
+                    <div class="info-item"><div class="info-label">${t('financial.total_emi_collected')}</div><div class="info-value">${formatCurrency(s.total_emi_collected)}</div></div>
+                    <div class="info-item"><div class="info-label">${t('financial.contribution_penalties')}</div><div class="info-value">${formatCurrency(s.contribution_penalties)}</div></div>
+                    <div class="info-item"><div class="info-label">${t('financial.emi_penalties')}</div><div class="info-value">${formatCurrency(s.emi_penalties)}</div></div>
+                    <div class="info-item"><div class="info-label">${t('financial.total_penalties')}</div><div class="info-value">${formatCurrency(s.total_penalties)}</div></div>
+                    <div class="info-item"><div class="info-label">${t('financial.pending_emi_amount')}</div><div class="info-value">${formatCurrency(s.pending_emi_amount)}</div></div>
                 </div>
             </div>
         </div>
         <div class="card section-gap">
-            <div class="card-header"><h3 class="card-title">Statistics</h3></div>
+            <div class="card-header"><h3 class="card-title">${t('financial.statistics')}</h3></div>
             <div class="card-body">
                 <div class="info-grid">
-                    <div class="info-item"><div class="info-label">Total Contribution Payments</div><div class="info-value">${st.total_contribution_payments}</div></div>
-                    <div class="info-item"><div class="info-label">Total EMI Payments</div><div class="info-value">${st.total_emi_payments}</div></div>
-                    <div class="info-item"><div class="info-label">Total Loans Approved</div><div class="info-value">${st.total_loans_approved}</div></div>
-                    <div class="info-item"><div class="info-label">Pending EMI Count</div><div class="info-value">${st.pending_emi_count}</div></div>
-                    <div class="info-item"><div class="info-label">Members with Penalties</div><div class="info-value">${st.members_with_penalties}</div></div>
+                    <div class="info-item"><div class="info-label">${t('financial.total_contribution_payments')}</div><div class="info-value">${st.total_contribution_payments}</div></div>
+                    <div class="info-item"><div class="info-label">${t('financial.total_emi_payments')}</div><div class="info-value">${st.total_emi_payments}</div></div>
+                    <div class="info-item"><div class="info-label">${t('financial.total_loans_approved')}</div><div class="info-value">${st.total_loans_approved}</div></div>
+                    <div class="info-item"><div class="info-label">${t('financial.pending_emi_count')}</div><div class="info-value">${st.pending_emi_count}</div></div>
+                    <div class="info-item"><div class="info-label">${t('financial.members_with_penalties')}</div><div class="info-value">${st.members_with_penalties}</div></div>
                 </div>
             </div>
         </div>
         ${penalties.length > 0 ? `
         <div class="card">
-            <div class="card-header"><h3 class="card-title">Members with Penalties</h3></div>
+            <div class="card-header"><h3 class="card-title">${t('financial.members_with_penalties')}</h3></div>
             <div class="card-body no-padding"><div class="table-wrapper">
-                <table class="data-table"><thead><tr><th>Member</th><th>Phone</th><th>Total Penalty</th></tr></thead><tbody>
+                <table class="data-table"><thead><tr><th>${t('table.name')}</th><th>${t('table.phone')}</th><th>${t('table.total_penalty')}</th></tr></thead><tbody>
                 ${penalties.map(p=>`<tr><td class="cell-primary">${p.name}</td><td class="cell-mono">${p.phone}</td><td class="cell-primary">${formatCurrency(p.total_penalty)}</td></tr>`).join('')}
                 </tbody></table>
             </div></div>
@@ -390,31 +468,31 @@ async function renderFinancialSummary() {
 
 function renderResetPassword() {
     $('contentArea').innerHTML = `
-    <div class="card form-card"><div class="card-header"><h3 class="card-title">Reset Member Password</h3></div><div class="card-body">
+    <div class="card form-card"><div class="card-header"><h3 class="card-title">${t('reset_pw.title')}</h3></div><div class="card-body">
         <form id="resetPwForm">
-            <div class="form-group-content"><label>Member Phone Number</label><input class="form-input" type="tel" id="rpPhone" placeholder="Enter phone number" required></div>
-            <div class="form-group-content"><label>New Password</label><input class="form-input" type="text" id="rpPassword" placeholder="Enter new password" required></div>
-            <div class="form-actions"><button type="submit" class="btn btn-primary">Reset Password</button></div>
+            <div class="form-group-content"><label>${t('reset_pw.phone')}</label><input class="form-input" type="tel" id="rpPhone" placeholder="${t('reset_pw.phone_placeholder')}" required></div>
+            <div class="form-group-content"><label>${t('reset_pw.new_password')}</label><input class="form-input" type="text" id="rpPassword" placeholder="${t('reset_pw.password_placeholder')}" required></div>
+            <div class="form-actions"><button type="submit" class="btn btn-primary">${t('reset_pw.submit')}</button></div>
         </form>
     </div></div>`;
     $('resetPwForm').addEventListener('submit', async e => {
         e.preventDefault();
-        try { await api.resetPassword({ phone:$('rpPhone').value.trim(), new_password:$('rpPassword').value }); showToast('Password reset!','success'); $('resetPwForm').reset(); }
+        try { await api.resetPassword({ phone:$('rpPhone').value.trim(), new_password:$('rpPassword').value }); showToast(t('reset_pw.success'),'success'); $('resetPwForm').reset(); }
         catch(err) { showToast(err.message,'error'); }
     });
 }
 
 function showCreateUserModal() {
-    openModal('Add New Member', `
+    openModal(t('create_user.title'), `
         <form id="createUserForm">
-            <div class="form-group-content"><label>Full Name</label><input class="form-input" id="cuName" placeholder="Member name" required></div>
-            <div class="form-group-content"><label>Phone Number</label><input class="form-input" type="tel" id="cuPhone" placeholder="Phone number" required></div>
-            <div class="form-group-content"><label>Password</label><input class="form-input" id="cuPassword" placeholder="Initial password" required></div>
-            <div class="form-actions"><button type="submit" class="btn btn-primary btn-full">Create Member</button></div>
+            <div class="form-group-content"><label>${t('create_user.name')}</label><input class="form-input" id="cuName" placeholder="${t('create_user.name_placeholder')}" required></div>
+            <div class="form-group-content"><label>${t('login.phone')}</label><input class="form-input" type="tel" id="cuPhone" placeholder="${t('create_user.phone_placeholder')}" required></div>
+            <div class="form-group-content"><label>${t('create_user.password')}</label><input class="form-input" id="cuPassword" placeholder="${t('create_user.password_placeholder')}" required></div>
+            <div class="form-actions"><button type="submit" class="btn btn-primary btn-full">${t('create_user.submit')}</button></div>
         </form>`);
     $('createUserForm').addEventListener('submit', async e => {
         e.preventDefault();
-        try { await api.createUser({name:$('cuName').value.trim(),phone:$('cuPhone').value.trim(),password:$('cuPassword').value}); showToast('Member created!','success'); closeModal(); }
+        try { await api.createUser({name:$('cuName').value.trim(),phone:$('cuPhone').value.trim(),password:$('cuPassword').value}); showToast(t('create_user.success'),'success'); closeModal(); }
         catch(err) { showToast(err.message,'error'); }
     });
 }
@@ -428,24 +506,24 @@ async function renderUserDashboard() {
         const [profile, installments] = await Promise.all([api.profile(), api.myInstallments()]);
         c.innerHTML = `
         <div class="stats-grid">
-            ${statCard('Total Installments', installments.total_installments, `${installments.paid_count} paid`, 'purple', ICONS.installments)}
-            ${statCard('Pending EMIs', installments.pending_count, installments.pending_count > 0 ? 'Due payments' : 'All clear!', 'amber', ICONS.clock)}
-            ${statCard('Paid EMIs', installments.paid_count, 'Completed', 'green', ICONS.check)}
+            ${statCard(t('user.total_installments'), installments.total_installments, `${installments.paid_count} ${t('user.paid')}`, 'purple', ICONS.installments)}
+            ${statCard(t('user.pending_emis'), installments.pending_count, installments.pending_count > 0 ? t('user.due_payments') : t('user.all_clear'), 'amber', ICONS.clock)}
+            ${statCard(t('user.paid_emis'), installments.paid_count, t('user.completed'), 'green', ICONS.check)}
         </div>
-        <div class="card section-gap"><div class="card-header"><h3 class="card-title">My Profile</h3></div><div class="card-body">
+        <div class="card section-gap"><div class="card-header"><h3 class="card-title">${t('user.my_profile')}</h3></div><div class="card-body">
             <div class="info-grid">
-                <div class="info-item"><div class="info-label">Name</div><div class="info-value">${profile.name}</div></div>
-                <div class="info-item"><div class="info-label">Phone</div><div class="info-value">${profile.username}</div></div>
-                <div class="info-item"><div class="info-label">Role</div><div class="info-value">${profile.role}</div></div>
-                <div class="info-item"><div class="info-label">Status</div><div class="info-value">${profile.is_active?'<span class="badge badge-success"><span class="badge-dot"></span>Active</span>':'<span class="badge badge-danger"><span class="badge-dot"></span>Inactive</span>'}</div></div>
+                <div class="info-item"><div class="info-label">${t('common.name')}</div><div class="info-value">${profile.name}</div></div>
+                <div class="info-item"><div class="info-label">${t('common.phone')}</div><div class="info-value">${profile.username}</div></div>
+                <div class="info-item"><div class="info-label">${t('common.role')}</div><div class="info-value">${profile.role}</div></div>
+                <div class="info-item"><div class="info-label">${t('common.status')}</div><div class="info-value">${profile.is_active?`<span class="badge badge-success"><span class="badge-dot"></span>${t('badge.active')}</span>`:`<span class="badge badge-danger"><span class="badge-dot"></span>${t('badge.inactive')}</span>`}</div></div>
             </div>
         </div></div>
-        <div class="card"><div class="card-header"><h3 class="card-title">Quick Actions</h3></div><div class="card-body" style="display:flex;gap:12px;flex-wrap:wrap">
-            <button class="btn btn-primary" onclick="navigate('applyLoan')">📝 Apply for Loan</button>
-            <button class="btn btn-success" onclick="navigate('payContribution')">💵 Pay Contribution</button>
-            <button class="btn btn-secondary" onclick="navigate('myInstallments')">📋 My Installments</button>
-            <button class="btn btn-secondary" onclick="navigate('calculator')">🧮 EMI Calculator</button>
-            <button class="btn btn-secondary" onclick="navigate('myEarnings')">📈 My Earnings</button>
+        <div class="card"><div class="card-header"><h3 class="card-title">${t('user.quick_actions')}</h3></div><div class="card-body" style="display:flex;gap:12px;flex-wrap:wrap">
+            <button class="btn btn-primary" onclick="navigate('applyLoan')">${t('user.apply_loan')}</button>
+            <button class="btn btn-success" onclick="navigate('payContribution')">${t('user.pay_contribution')}</button>
+            <button class="btn btn-secondary" onclick="navigate('myInstallments')">${t('user.my_installments')}</button>
+            <button class="btn btn-secondary" onclick="navigate('calculator')">${t('user.emi_calculator')}</button>
+            <button class="btn btn-secondary" onclick="navigate('myEarnings')">${t('user.my_earnings')}</button>
         </div></div>`;
     } catch(e) { c.innerHTML = errorHTML(e.message); }
 }
@@ -456,31 +534,31 @@ async function renderMyInstallments() {
         const data = await api.myInstallments();
         c.innerHTML = `
         <div class="stats-grid">
-            ${statCard('Total', data.total_installments, 'installments', 'purple', ICONS.installments)}
-            ${statCard('Pending', data.pending_count, 'to pay', 'amber', ICONS.clock)}
-            ${statCard('Paid', data.paid_count, 'completed', 'green', ICONS.check)}
+            ${statCard(t('installments.total'), data.total_installments, t('installments.installments'), 'purple', ICONS.installments)}
+            ${statCard(t('installments.pending'), data.pending_count, t('installments.to_pay'), 'amber', ICONS.clock)}
+            ${statCard(t('installments.paid'), data.paid_count, t('installments.completed'), 'green', ICONS.check)}
         </div>
         ${data.pending_installments.length > 0 ? `
-        <div class="card section-gap"><div class="card-header"><h3 class="card-title">Pending Installments (${data.pending_count})</h3></div>
+        <div class="card section-gap"><div class="card-header"><h3 class="card-title">${t('installments.pending_title')} (${data.pending_count})</h3></div>
         <div class="card-body no-padding"><div class="table-wrapper">
-            <table class="data-table"><thead><tr><th>Description</th><th>Amount</th><th>Due Date</th><th>Action</th></tr></thead><tbody>
+            <table class="data-table"><thead><tr><th>${t('table.description')}</th><th>${t('table.amount')}</th><th>${t('table.due_date')}</th><th>${t('table.action')}</th></tr></thead><tbody>
             ${data.pending_installments.map(i=>`<tr>
-                <td>${i.description||'Loan Installment'}</td>
+                <td>${i.description||t('installments.loan_installment')}</td>
                 <td class="cell-primary">${formatCurrency(i.total_pending_amount)}</td>
                 <td>${formatDate(i.due_date)}</td>
-                <td><button class="btn btn-success btn-sm" onclick="showPayInstallmentModal(${i.id}, ${i.total_pending_amount})">Pay Now</button></td>
+                <td><button class="btn btn-success btn-sm" onclick="showPayInstallmentModal(${i.id}, ${i.total_pending_amount})">${t('installments.pay_now')}</button></td>
             </tr>`).join('')}
             </tbody></table>
-        </div></div></div>` : '<div class="card section-gap"><div class="card-body"><div class="empty-state">' + ICONS.check + '<h3>No pending installments!</h3><p>All your EMIs are paid up.</p></div></div></div>'}
+        </div></div></div>` : '<div class="card section-gap"><div class="card-body"><div class="empty-state">' + ICONS.check + '<h3>' + t('installments.no_pending') + '</h3><p>' + t('installments.all_paid') + '</p></div></div></div>'}
         ${data.paid_installments.length > 0 ? `
-        <div class="card"><div class="card-header"><h3 class="card-title">Paid Installments (${data.paid_count})</h3></div>
+        <div class="card"><div class="card-header"><h3 class="card-title">${t('installments.paid_title')} (${data.paid_count})</h3></div>
         <div class="card-body no-padding"><div class="table-wrapper">
-            <table class="data-table"><thead><tr><th>Description</th><th>Amount</th><th>Paid On</th><th>Late</th><th>Penalty</th></tr></thead><tbody>
+            <table class="data-table"><thead><tr><th>${t('table.description')}</th><th>${t('table.amount')}</th><th>${t('table.paid_on')}</th><th>${t('table.late')}</th><th>${t('table.penalty')}</th></tr></thead><tbody>
             ${data.paid_installments.map(i=>`<tr>
-                <td>${i.description||'Loan Installment'}</td>
+                <td>${i.description||t('installments.loan_installment')}</td>
                 <td class="cell-primary">${formatCurrency(i.total_loan_amount)}</td>
                 <td>${formatDate(i.payment_date)}</td>
-                <td>${i.days_late ? i.days_late + ' days' : '—'}</td>
+                <td>${i.days_late ? i.days_late + ' ' + t('common.days') : '—'}</td>
                 <td>${i.penalty_amount ? formatCurrency(i.penalty_amount) : '—'}</td>
             </tr>`).join('')}
             </tbody></table>
@@ -489,27 +567,27 @@ async function renderMyInstallments() {
 }
 
 function showPayInstallmentModal(id, amount) {
-    openModal('Pay Installment', `
+    openModal(t('pay_inst.title'), `
         <div style="background:var(--purple-50);padding:16px;border-radius:var(--radius-sm);margin-bottom:20px">
-            <strong>Amount: ${formatCurrency(amount)}</strong><br>
-            <span style="font-size:0.85rem;color:var(--gray-500)">Late payments may incur ₹10/day penalty</span>
+            <strong>${t('common.amount')}: ${formatCurrency(amount)}</strong><br>
+            <span style="font-size:0.85rem;color:var(--gray-500)">${t('pay_inst.penalty_note')}</span>
         </div>
         <form id="payInstForm">
-            <div class="form-group-content"><label>Payment Transaction ID</label>
-                <input class="form-input" id="instTxn" placeholder="Enter UPI/bank transaction ID" required>
+            <div class="form-group-content"><label>${t('pay_inst.txn_id')}</label>
+                <input class="form-input" id="instTxn" placeholder="${t('pay_inst.txn_placeholder')}" required>
             </div>
-            <div class="form-actions"><button type="submit" class="btn btn-success btn-full">Confirm Payment</button></div>
+            <div class="form-actions"><button type="submit" class="btn btn-success btn-full">${t('pay_inst.confirm')}</button></div>
         </form>`);
     $('payInstForm').addEventListener('submit', async e => {
         e.preventDefault();
         try {
             const r = await api.payInstallment(id, $('instTxn').value.trim());
-            showToast('Installment paid!','success'); closeModal();
-            openModal('Payment Success', `<div class="info-grid">
-                <div class="info-item"><div class="info-label">Amount</div><div class="info-value">${formatCurrency(r.amount_paid)}</div></div>
-                <div class="info-item"><div class="info-label">Penalty</div><div class="info-value">${formatCurrency(r.penalty_amount)}</div></div>
-                <div class="info-item"><div class="info-label">Total Paid</div><div class="info-value">${formatCurrency(r.total_paid)}</div></div>
-                <div class="info-item"><div class="info-label">Date</div><div class="info-value">${formatDate(r.payment_date)}</div></div>
+            showToast(t('pay_inst.success'),'success'); closeModal();
+            openModal(t('pay_inst.success_title'), `<div class="info-grid">
+                <div class="info-item"><div class="info-label">${t('common.amount')}</div><div class="info-value">${formatCurrency(r.amount_paid)}</div></div>
+                <div class="info-item"><div class="info-label">${t('common.penalty')}</div><div class="info-value">${formatCurrency(r.penalty_amount)}</div></div>
+                <div class="info-item"><div class="info-label">${t('common.total_paid')}</div><div class="info-value">${formatCurrency(r.total_paid)}</div></div>
+                <div class="info-item"><div class="info-label">${t('common.date')}</div><div class="info-value">${formatDate(r.payment_date)}</div></div>
             </div>`);
             renderMyInstallments();
         } catch(err) { showToast(err.message,'error'); }
@@ -525,21 +603,21 @@ async function renderMyEarnings() {
         const m = data.member_contribution;
         c.innerHTML = `
         <div class="stats-grid">
-            ${statCard('My Total Earnings', formatCurrency(e.total_earning), 'Your share of profits', 'green', ICONS.earnings)}
-            ${statCard('Interest Share', formatCurrency(e.interest_share), 'From loan interest', 'purple', ICONS.money)}
-            ${statCard('Penalty Share', formatCurrency(e.penalty_share), 'From late fees', 'amber', ICONS.alert)}
+            ${statCard(t('earnings.total'), formatCurrency(e.total_earning), t('earnings.your_share'), 'green', ICONS.earnings)}
+            ${statCard(t('earnings.interest_share'), formatCurrency(e.interest_share), t('earnings.from_interest'), 'purple', ICONS.money)}
+            ${statCard(t('earnings.penalty_share'), formatCurrency(e.penalty_share), t('earnings.from_late_fees'), 'amber', ICONS.alert)}
         </div>
-        <div class="card section-gap"><div class="card-header"><h3 class="card-title">Group Totals</h3></div><div class="card-body">
+        <div class="card section-gap"><div class="card-header"><h3 class="card-title">${t('earnings.group_totals')}</h3></div><div class="card-body">
             <div class="info-grid">
-                <div class="info-item"><div class="info-label">Total Interest Earned</div><div class="info-value">${formatCurrency(g.total_interest_earned)}</div></div>
-                <div class="info-item"><div class="info-label">Total Penalties Collected</div><div class="info-value">${formatCurrency(g.total_penalties_collected)}</div></div>
-                <div class="info-item"><div class="info-label">Grand Total</div><div class="info-value">${formatCurrency(g.grand_total)}</div></div>
-                <div class="info-item"><div class="info-label">Active Members</div><div class="info-value">${data.total_active_members}</div></div>
+                <div class="info-item"><div class="info-label">${t('earnings.total_interest')}</div><div class="info-value">${formatCurrency(g.total_interest_earned)}</div></div>
+                <div class="info-item"><div class="info-label">${t('earnings.total_penalties_collected')}</div><div class="info-value">${formatCurrency(g.total_penalties_collected)}</div></div>
+                <div class="info-item"><div class="info-label">${t('earnings.grand_total')}</div><div class="info-value">${formatCurrency(g.grand_total)}</div></div>
+                <div class="info-item"><div class="info-label">${t('earnings.active_members')}</div><div class="info-value">${data.total_active_members}</div></div>
             </div>
         </div></div>
-        <div class="card"><div class="card-header"><h3 class="card-title">My Contribution</h3></div><div class="card-body">
+        <div class="card"><div class="card-header"><h3 class="card-title">${t('earnings.my_contribution')}</h3></div><div class="card-body">
             <div class="info-grid">
-                <div class="info-item"><div class="info-label">Penalty Paid by Me</div><div class="info-value">${formatCurrency(m.penalty_paid_by_me)}</div></div>
+                <div class="info-item"><div class="info-label">${t('earnings.penalty_paid')}</div><div class="info-value">${formatCurrency(m.penalty_paid_by_me)}</div></div>
             </div>
         </div></div>`;
     } catch(e) { c.innerHTML = errorHTML(e.message); }
@@ -547,41 +625,41 @@ async function renderMyEarnings() {
 
 function renderApplyLoan() {
     $('contentArea').innerHTML = `
-    <div class="card form-card"><div class="card-header"><h3 class="card-title">Apply for a Loan</h3></div><div class="card-body">
+    <div class="card form-card"><div class="card-header"><h3 class="card-title">${t('apply.title')}</h3></div><div class="card-body">
         <form id="applyLoanForm">
             <div class="form-row">
-                <div class="form-group-content"><label>Loan Amount (₹)</label><input class="form-input" type="number" id="alAmount" placeholder="e.g. 10000" min="1" required></div>
-                <div class="form-group-content"><label>Interest Rate (%)</label><input class="form-input" type="number" id="alRate" value="2" step="0.1" min="0" required></div>
+                <div class="form-group-content"><label>${t('apply.amount')}</label><input class="form-input" type="number" id="alAmount" placeholder="${t('apply.amount_placeholder')}" min="1" required></div>
+                <div class="form-group-content"><label>${t('apply.rate')}</label><input class="form-input" type="number" id="alRate" value="2" step="0.1" min="0" required></div>
             </div>
             <div class="form-row">
-                <div class="form-group-content"><label>Number of Installments</label><input class="form-input" type="number" id="alInstallments" placeholder="e.g. 6" min="1" required></div>
-                <div class="form-group-content"><label>Description (optional)</label><input class="form-input" id="alDesc" placeholder="Purpose of loan"></div>
+                <div class="form-group-content"><label>${t('apply.installments')}</label><input class="form-input" type="number" id="alInstallments" placeholder="${t('apply.installments_placeholder')}" min="1" required></div>
+                <div class="form-group-content"><label>${t('apply.description')}</label><input class="form-input" id="alDesc" placeholder="${t('apply.description_placeholder')}"></div>
             </div>
-            <div class="form-actions"><button type="submit" class="btn btn-primary">Submit Application</button></div>
+            <div class="form-actions"><button type="submit" class="btn btn-primary">${t('apply.submit')}</button></div>
         </form>
     </div></div>`;
     $('applyLoanForm').addEventListener('submit', async e => {
         e.preventDefault();
         try {
             await api.applyLoan({ amount:+$('alAmount').value, interest_rate:+$('alRate').value, installments:+$('alInstallments').value, description:$('alDesc').value||null });
-            showToast('Loan application submitted!','success'); navigate('myInstallments');
+            showToast(t('apply.success'),'success'); navigate('myInstallments');
         } catch(err) { showToast(err.message,'error'); }
     });
 }
 
 function renderCalculator() {
     $('contentArea').innerHTML = `
-    <div class="card form-card" style="max-width:700px"><div class="card-header"><h3 class="card-title">EMI Calculator</h3></div><div class="card-body">
+    <div class="card form-card" style="max-width:700px"><div class="card-header"><h3 class="card-title">${t('calc.title')}</h3></div><div class="card-body">
         <form id="calcForm">
             <div class="form-row">
-                <div class="form-group-content"><label>Loan Amount (₹)</label><input class="form-input" type="number" id="calcAmt" placeholder="e.g. 10000" min="1" required></div>
-                <div class="form-group-content"><label>Interest Rate (%/month)</label><input class="form-input" type="number" id="calcRate" value="2" step="0.1" min="0" required></div>
+                <div class="form-group-content"><label>${t('calc.amount')}</label><input class="form-input" type="number" id="calcAmt" placeholder="${t('calc.amount_placeholder')}" min="1" required></div>
+                <div class="form-group-content"><label>${t('calc.rate')}</label><input class="form-input" type="number" id="calcRate" value="2" step="0.1" min="0" required></div>
             </div>
             <div class="form-row">
-                <div class="form-group-content"><label>Installments</label><input class="form-input" type="number" id="calcInst" value="6" min="1" required></div>
-                <div class="form-group-content"><label>Start Date</label><input class="form-input" type="date" id="calcDate" value="${new Date().toISOString().split('T')[0]}" required></div>
+                <div class="form-group-content"><label>${t('calc.installments')}</label><input class="form-input" type="number" id="calcInst" value="6" min="1" required></div>
+                <div class="form-group-content"><label>${t('calc.start_date')}</label><input class="form-input" type="date" id="calcDate" value="${new Date().toISOString().split('T')[0]}" required></div>
             </div>
-            <div class="form-actions"><button type="submit" class="btn btn-primary">Calculate</button></div>
+            <div class="form-actions"><button type="submit" class="btn btn-primary">${t('calc.calculate')}</button></div>
         </form>
         <div id="calcResult" style="margin-top:24px"></div>
     </div></div>`;
@@ -591,13 +669,13 @@ function renderCalculator() {
             const r = await api.calcLoan({ amount:$('calcAmt').value, rate:$('calcRate').value, installments:$('calcInst').value, start_date:$('calcDate').value });
             $('calcResult').innerHTML = `
             <div class="calc-result-grid">
-                <div class="calc-result-item"><div class="info-label">Principal</div><div class="info-value">${formatCurrency(r.principal_amount)}</div></div>
-                <div class="calc-result-item"><div class="info-label">Total Interest</div><div class="info-value">${formatCurrency(r.total_interest)}</div></div>
-                <div class="calc-result-item"><div class="info-label">Total Payable</div><div class="info-value">${formatCurrency(r.total_amount)}</div></div>
-                <div class="calc-result-item"><div class="info-label">Duration</div><div class="info-value">${r.installments} months</div></div>
+                <div class="calc-result-item"><div class="info-label">${t('calc.principal')}</div><div class="info-value">${formatCurrency(r.principal_amount)}</div></div>
+                <div class="calc-result-item"><div class="info-label">${t('calc.total_interest')}</div><div class="info-value">${formatCurrency(r.total_interest)}</div></div>
+                <div class="calc-result-item"><div class="info-label">${t('calc.total_payable')}</div><div class="info-value">${formatCurrency(r.total_amount)}</div></div>
+                <div class="calc-result-item"><div class="info-label">${t('calc.duration')}</div><div class="info-value">${r.installments} ${t('calc.months')}</div></div>
             </div>
-            <div class="card"><div class="card-header"><h3 class="card-title">Installment Breakdown</h3></div><div class="card-body no-padding"><div class="table-wrapper">
-                <table class="data-table"><thead><tr><th>#</th><th>Due Date</th><th>Principal</th><th>Interest</th><th>EMI</th><th>Balance</th></tr></thead><tbody>
+            <div class="card"><div class="card-header"><h3 class="card-title">${t('calc.breakdown')}</h3></div><div class="card-body no-padding"><div class="table-wrapper">
+                <table class="data-table"><thead><tr><th>${t('table.hash')}</th><th>${t('table.due_date')}</th><th>${t('table.principal')}</th><th>${t('table.interest')}</th><th>${t('table.emi')}</th><th>${t('table.balance')}</th></tr></thead><tbody>
                 ${r.installment_breakdown.map(i=>`<tr><td>${i.month}</td><td>${formatDate(i.due_date)}</td><td>${formatCurrency(i.principal)}</td><td>${formatCurrency(i.interest)}</td><td class="cell-primary">${formatCurrency(i.total_payment)}</td><td>${formatCurrency(i.remaining_balance)}</td></tr>`).join('')}
                 </tbody></table>
             </div></div></div>`;
@@ -607,28 +685,28 @@ function renderCalculator() {
 
 function renderPayContribution() {
     $('contentArea').innerHTML = `
-    <div class="card form-card"><div class="card-header"><h3 class="card-title">Pay Monthly Contribution</h3></div><div class="card-body">
+    <div class="card form-card"><div class="card-header"><h3 class="card-title">${t('contrib.title')}</h3></div><div class="card-body">
         <div style="background:var(--purple-50);padding:16px;border-radius:var(--radius-sm);margin-bottom:20px">
-            <strong>Monthly Contribution: ${formatCurrency(1000)}</strong><br>
-            <span style="font-size:0.85rem;color:var(--gray-500)">Due on 10th of every month. ₹10/day penalty after 12th.</span>
+            <strong>${t('contrib.monthly')} ${formatCurrency(1000)}</strong><br>
+            <span style="font-size:0.85rem;color:var(--gray-500)">${t('contrib.due_note')}</span>
         </div>
         <form id="contribForm">
-            <div class="form-group-content"><label>Payment Transaction ID</label><input class="form-input" id="contribTxn" placeholder="Enter your payment transaction ID" required>
-            <div class="form-help">Enter the UPI/bank transaction reference number</div></div>
-            <div class="form-actions"><button type="submit" class="btn btn-success">Pay ₹1,000</button></div>
+            <div class="form-group-content"><label>${t('contrib.txn_id')}</label><input class="form-input" id="contribTxn" placeholder="${t('contrib.txn_placeholder')}" required>
+            <div class="form-help">${t('contrib.txn_help')}</div></div>
+            <div class="form-actions"><button type="submit" class="btn btn-success">${t('contrib.pay')}</button></div>
         </form>
     </div></div>`;
     $('contribForm').addEventListener('submit', async e => {
         e.preventDefault();
         try {
             const r = await api.payContribution($('contribTxn').value.trim());
-            showToast('Contribution paid successfully!','success');
-            openModal('Payment Successful', `
+            showToast(t('contrib.success'),'success');
+            openModal(t('contrib.success_title'), `
                 <div class="info-grid">
-                    <div class="info-item"><div class="info-label">Amount</div><div class="info-value">${formatCurrency(r.contribution_amount)}</div></div>
-                    <div class="info-item"><div class="info-label">Penalty</div><div class="info-value">${formatCurrency(r.penalty_amount)}</div></div>
-                    <div class="info-item"><div class="info-label">Total Paid</div><div class="info-value">${formatCurrency(r.total_paid)}</div></div>
-                    <div class="info-item"><div class="info-label">Date</div><div class="info-value">${formatDate(r.payment_date)}</div></div>
+                    <div class="info-item"><div class="info-label">${t('common.amount')}</div><div class="info-value">${formatCurrency(r.contribution_amount)}</div></div>
+                    <div class="info-item"><div class="info-label">${t('common.penalty')}</div><div class="info-value">${formatCurrency(r.penalty_amount)}</div></div>
+                    <div class="info-item"><div class="info-label">${t('common.total_paid')}</div><div class="info-value">${formatCurrency(r.total_paid)}</div></div>
+                    <div class="info-item"><div class="info-label">${t('common.date')}</div><div class="info-value">${formatDate(r.payment_date)}</div></div>
                 </div>`);
             $('contribForm').reset();
         } catch(err) { showToast(err.message,'error'); }
@@ -637,25 +715,25 @@ function renderPayContribution() {
 
 // ---- Shared Render Helpers ----
 function renderPaymentTable(payments, title) {
-    if(!payments||!payments.length) return `<div class="card section-gap"><div class="card-header"><h3 class="card-title">${title}</h3></div><div class="card-body"><div class="empty-state">${ICONS.wallet}<h3>No payments yet</h3><p>Payment records will appear here.</p></div></div></div>`;
+    if(!payments||!payments.length) return `<div class="card section-gap"><div class="card-header"><h3 class="card-title">${title}</h3></div><div class="card-body"><div class="empty-state">${ICONS.wallet}<h3>${t('common.no_payments')}</h3><p>${t('common.payments_appear')}</p></div></div></div>`;
     return `<div class="card section-gap"><div class="card-header"><h3 class="card-title">${title} (${payments.length})</h3></div><div class="card-body no-padding"><div class="table-wrapper">
-        <table class="data-table"><thead><tr><th>Type</th><th>Amount</th><th>Due</th><th>Paid</th><th>Late</th><th>Penalty</th><th>Status</th></tr></thead><tbody>
+        <table class="data-table"><thead><tr><th>${t('table.type')}</th><th>${t('table.amount')}</th><th>${t('table.due')}</th><th>${t('table.paid')}</th><th>${t('table.late')}</th><th>${t('table.penalty')}</th><th>${t('table.status')}</th></tr></thead><tbody>
         ${payments.map(p=>`<tr>
-            <td>${p.payment_type==='monthly_contribution'?'<span class="badge badge-info"><span class="badge-dot"></span>Contribution</span>':'<span class="badge badge-neutral"><span class="badge-dot"></span>Loan EMI</span>'}</td>
+            <td>${p.payment_type==='monthly_contribution'?`<span class="badge badge-info"><span class="badge-dot"></span>${t('badge.contribution')}</span>`:`<span class="badge badge-neutral"><span class="badge-dot"></span>${t('badge.loan_emi')}</span>`}</td>
             <td class="cell-primary">${formatCurrency(p.total_pending_amount||p.total_loan_amount)}</td>
             <td>${formatDate(p.due_date)}</td>
             <td>${p.payment_date?formatDate(p.payment_date):'—'}</td>
-            <td>${p.days_late?p.days_late+' days':'—'}</td>
+            <td>${p.days_late?p.days_late+' '+t('common.days'):'—'}</td>
             <td>${p.penalty_amount?formatCurrency(p.penalty_amount):'—'}</td>
-            <td>${p.payment_date?'<span class="badge badge-success"><span class="badge-dot"></span>Paid</span>':'<span class="badge badge-warning"><span class="badge-dot"></span>Pending</span>'}</td>
+            <td>${p.payment_date?`<span class="badge badge-success"><span class="badge-dot"></span>${t('badge.paid')}</span>`:`<span class="badge badge-warning"><span class="badge-dot"></span>${t('badge.pending')}</span>`}</td>
         </tr>`).join('')}
         </tbody></table></div></div></div>`;
 }
 
 function renderLoanTable(loans, title) {
-    if(!loans||!loans.length) return `<div class="card"><div class="card-header"><h3 class="card-title">${title}</h3></div><div class="card-body"><div class="empty-state">${ICONS.money}<h3>No loans yet</h3><p>Loan records will appear here.</p></div></div></div>`;
+    if(!loans||!loans.length) return `<div class="card"><div class="card-header"><h3 class="card-title">${title}</h3></div><div class="card-body"><div class="empty-state">${ICONS.money}<h3>${t('common.no_loans')}</h3><p>${t('common.loans_appear')}</p></div></div></div>`;
     return `<div class="card section-gap"><div class="card-header"><h3 class="card-title">${title} (${loans.length})</h3></div><div class="card-body no-padding"><div class="table-wrapper">
-        <table class="data-table"><thead><tr><th>ID</th><th>Amount</th><th>Rate</th><th>EMIs</th><th>Status</th><th>Start</th><th>End</th></tr></thead><tbody>
+        <table class="data-table"><thead><tr><th>${t('table.id')}</th><th>${t('table.amount')}</th><th>${t('table.rate')}</th><th>${t('table.emis')}</th><th>${t('table.status')}</th><th>${t('table.start')}</th><th>${t('table.end')}</th></tr></thead><tbody>
         ${loans.map(l=>`<tr>
             <td class="cell-primary">#${l.id}</td><td class="cell-primary">${formatCurrency(l.amount)}</td><td>${l.interest_rate}%</td><td>${l.installments}</td>
             <td>${statusBadge(l.status)}</td><td>${formatDate(l.start_date)}</td><td>${formatDate(l.end_date)}</td>
@@ -665,9 +743,11 @@ function renderLoanTable(loans, title) {
 
 function statusBadge(s) {
     const m = { approved:'badge-success', pending:'badge-warning', rejected:'badge-danger', active:'badge-success' };
-    return `<span class="badge ${m[s]||'badge-neutral'}"><span class="badge-dot"></span>${s.charAt(0).toUpperCase()+s.slice(1)}</span>`;
+    const labelMap = { approved:'badge.approved', pending:'badge.pending', rejected:'badge.rejected', active:'badge.active' };
+    const label = labelMap[s] ? t(labelMap[s]) : s.charAt(0).toUpperCase()+s.slice(1);
+    return `<span class="badge ${m[s]||'badge-neutral'}"><span class="badge-dot"></span>${label}</span>`;
 }
 
 function errorHTML(msg) {
-    return `<div class="card"><div class="card-body"><div class="empty-state">${ICONS.alert}<h3>Something went wrong</h3><p>${msg}</p></div></div></div>`;
+    return `<div class="card"><div class="card-body"><div class="empty-state">${ICONS.alert}<h3>${t('common.error_title')}</h3><p>${msg}</p></div></div></div>`;
 }

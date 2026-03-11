@@ -116,3 +116,14 @@ async def get_my_earnings(
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get("/emi_alert")
+async def get_emi_alert(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Check current month EMI status with penalty alerts"""
+    from app.api.services.loan_service import check_current_month_emi_status
+    result = check_current_month_emi_status(db, current_user["id"])
+    return result

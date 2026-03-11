@@ -512,3 +512,106 @@ def get_member_earnings(db: Session, member_id: int):
             "penalty_paid_by_me": round(member_penalty_paid, 2)
         }
     }
+
+
+def check_current_month_emi_status(db: Session, member_id: int):
+    """Check if current month EMI is pending and calculate penalty if applicable"""
+    from datetime import datetime
+    
+    today = datetime.now().date()
+    current_month = today.replace(day=1)
+    
+    # Get all pending EMIs for current month
+    result = db.execute(
+        text("""
+            SELECT id, member_id, description, due_date, total_pending_amount, transaction_id
+            FROM payments
+            WHERE member_id = :member_id 
+            AND payment_type = 'loan_installment'
+            AND payment_date IS NULL
+            AND due_date >= :month_start
+            AND due_date < :next_month
+            ORDER BY due_date ASC
+        """),
+        {
+            "member_id": member_id,
+            "month_start": current_month,
+            "next_month": current_month.replace(day=1) + timedelta(days=32)
+        }
+    )
+    pending_emis = result.fetchall()
+    
+    if not pending_emis:
+        return {
+            "status": "no_pending_emi",
+            "message": "No pending EMI for current month",
+            "current_date": today.strftime("%Y-%m-%d")
+        }
+    
+    alerts = []
+    total_penalty = 0
+    PENALTY_PER_DAY = 10.0
+    
+    for emi in pending_emis:
+        emi_id = emi[0]
+        description = emi[2]
+        due_date = emi[3]
+        pending_amount = emi[4]
+        transaction_id = emi[5]
+        
+        # Calculate penalty if past due date
+        days_late = 0
+        penalty = 0
+        alert_level = "info"
+        alert_message = ""
+        
+        if today > due_date:
+            # Penalty starts from day after due date
+            days_late = (today - due_date).days
+            penalty = days_late * PENALTY_PER_DAY
+            total_penalty += penalty
+            
+            if days_late >= 1:
+                alert_level = "critical"
+                alert_message = f"OVERDUE by {days_late} days! Penalty: ₹{penalty}"
+        elif today == due_date:
+            alert_level = "warning"
+            alert_message = "Due TODAY! Pay now to avoid penalty"
+        else:
+            days_remaining = (due_date - today).days
+            alert_level = "info"
+            alert_message = f"Due in {days_remaining} days"
+        
+        alerts.append({
+            "emi_id": emi_id,
+            "description": description,
+            "due_date": due_date.strftime("%Y-%m-%d"),
+            "pending_amount": pending_amount,
+            "days_late": days_late,
+            "penalty_amount": penalty,
+            "total_payable": pending_amount + penalty,
+            "alert_level": alert_level,
+            "alert_message": alert_message,
+            "transaction_id": transaction_id
+        })
+    
+    # Determine overall status
+    if today.day >= 10 and any(emi[3] <= today for emi in pending_emis):
+        overall_status = "overdue"
+        overall_message = f"⚠️ URGENT: You have overdue EMI payments! Total penalty: ₹{total_penalty}"
+    elif today.day >= 10:
+        overall_status = "due_soon"
+        overall_message = "EMI payment is due this month. Please pay before due date."
+    else:
+        overall_status = "upcoming"
+        overall_message = "EMI payment is upcoming this month."
+    
+    return {
+        "status": overall_status,
+        "message": overall_message,
+        "current_date": today.strftime("%Y-%m-%d"),
+        "current_day": today.day,
+        "total_pending_emis": len(pending_emis),
+        "total_penalty": total_penalty,
+        "emis": alerts
+    }
