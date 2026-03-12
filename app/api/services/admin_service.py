@@ -825,3 +825,74 @@ def get_payments_by_month(db: Session, month_year: str):
         },
         "payments": payments
     }
+
+
+def update_user_details(db: Session, user_id: int, name: str = None, phone: str = None, 
+                       password: str = None, is_active: bool = None):
+    """
+    Update user details (admin only)
+    Only provided fields will be updated
+    """
+    # Check if user exists
+    result = db.execute(
+        text("SELECT id, name, phone, is_active FROM users WHERE id = :user_id"),
+        {"user_id": user_id}
+    )
+    user = result.fetchone()
+    
+    if not user:
+        raise ValueError("User not found")
+    
+    # Build update query dynamically based on provided fields
+    update_fields = []
+    params = {"user_id": user_id}
+    
+    if name is not None:
+        update_fields.append("name = :name")
+        params["name"] = name
+    
+    if phone is not None:
+        # Check if phone already exists for another user
+        result = db.execute(
+            text("SELECT id FROM users WHERE phone = :phone AND id != :user_id"),
+            {"phone": phone, "user_id": user_id}
+        )
+        if result.fetchone():
+            raise ValueError("Phone number already exists for another user")
+        update_fields.append("phone = :phone")
+        params["phone"] = phone
+    
+    if password is not None:
+        update_fields.append("password = :password")
+        params["password"] = password
+    
+    if is_active is not None:
+        update_fields.append("is_active = :is_active")
+        params["is_active"] = is_active
+    
+    if not update_fields:
+        raise ValueError("No fields to update")
+    
+    # Execute update
+    update_query = f"UPDATE users SET {', '.join(update_fields)} WHERE id = :user_id"
+    db.execute(text(update_query), params)
+    db.commit()
+    
+    # Get updated user
+    result = db.execute(
+        text("SELECT id, phone, name, is_admin, join_date, is_active FROM users WHERE id = :user_id"),
+        {"user_id": user_id}
+    )
+    updated_user = result.fetchone()
+    
+    return {
+        "message": "User updated successfully",
+        "user": {
+            "id": updated_user[0],
+            "phone": updated_user[1],
+            "name": updated_user[2],
+            "is_admin": updated_user[3],
+            "join_date": updated_user[4].strftime("%Y-%m-%d") if updated_user[4] else None,
+            "is_active": updated_user[5]
+        }
+    }

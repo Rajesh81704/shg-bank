@@ -19,6 +19,7 @@ from app.api.services.admin_service import (
     get_dashboard_stats,
     get_financial_summary,
     get_payments_by_month,
+    update_user_details,
 )
 from app.api.services.loan_service import approve_loan_application, get_all_loans
 from app.api.middleware.auth_middleware import get_admin_user
@@ -241,6 +242,27 @@ async def get_payments_by_month_endpoint(
     """
     try:
         result = get_payments_by_month(db, month_year)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.put("/update-user/{user_id}")
+async def update_user(
+    user_id: int,
+    name: str = None,
+    phone: str = None,
+    password: str = None,
+    is_active: bool = None,
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """
+    Update user details (admin only)
+    All parameters are optional - only provided fields will be updated
+    """
+    try:
+        result = update_user_details(db, user_id, name, phone, password, is_active)
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
