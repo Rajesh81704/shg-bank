@@ -174,14 +174,17 @@ def get_all_users(db: Session) -> list[dict]:
 
 
 def get_user_by_phone_with_payment_and_loan_history(db: Session, phone: str):
-    """Get user by phone number with their payment details and loan history"""
+    """Get user by phone number or name with their payment details and loan history"""
     user_result = db.execute(
         text("""
             SELECT id, phone, name, is_admin, join_date, is_active
             FROM users
-            WHERE phone = :phone
+            WHERE phone = :exact_phone
+            OR phone ILIKE :search
+            OR name ILIKE :search
+            LIMIT 1
         """),
-        {"phone": phone}
+        {"exact_phone": phone, "search": f"%{phone}%"}
     )
     user = user_result.fetchone()
 
@@ -614,11 +617,18 @@ def create_loan_for_member(db: Session, phone: str, amount: float, interest_rate
 
 
 def get_member_installments_by_phone(db: Session, phone: str):
-    """Get all loan installments grouped by loan for a member by phone (admin only)"""
-    # Get member by phone
+    """Get all loan installments grouped by loan for a member by phone or name (admin only)"""
+    # Get member by phone or name
     result = db.execute(
-        text("SELECT id, name, phone FROM users WHERE phone = :phone"),
-        {"phone": phone}
+        text("""
+            SELECT id, name, phone 
+            FROM users 
+            WHERE phone = :exact_phone
+            OR phone ILIKE :search 
+            OR name ILIKE :search
+            LIMIT 1
+        """),
+        {"exact_phone": phone, "search": f"%{phone}%"}
     )
     member = result.fetchone()
     
@@ -722,4 +732,96 @@ def get_member_installments_by_phone(db: Session, phone: str):
             "total_paid": total_paid
         },
         "loans": loans_with_installments
+    }
+
+
+def get_payments_by_month(db: Session, month_year: str):
+    """
+    Get all payments for a specific month-year with member details
+    Format: YYYY-MM (e.g., 2026-03 for March 2026)
+    Returns: List of payments with member name, phone, amount, payment type
+    """
+    from datetime import datetime
+    
+    # Validate and parse month_year
+    try:
+        year, month = month_year.split('-')
+        year = int(year)
+        month = int(month)
+        if month < 1 or month > 12:
+            raise ValueError("Month must be between 1 and 12")
+    except (ValueError, AttributeError):
+        raise ValueError("Invalid month_year format. Use YYYY-MM (e.g., 2026-03)")
+    
+    # Query all payments for the given month where payment_date is not null
+    query = text("""
+        SELECT 
+            p.id,
+            p.member_id,
+            u.name as member_name,
+            u.phone as member_phone,
+            p.payment_type,
+            p.total_loan_amount,
+            p.total_pending_amount,
+            p.payment_date,
+            p.due_date,
+            p.transaction_id,
+            p.days_late,
+            p.penalty_amount,
+            p.description
+        FROM payments p
+        JOIN users u ON p.member_id = u.id
+        WHERE p.payment_date IS NOT NULL
+        AND EXTRACT(YEAR FROM p.payment_date) = :year
+        AND EXTRACT(MONTH FROM p.payment_date) = :month
+        ORDER BY p.payment_date DESC, u.name ASC
+    """)
+    
+    result = db.execute(query, {"year": year, "month": month})
+    rows = result.fetchall()
+    
+    payments = []
+    total_contribution = 0
+    total_loan_emi = 0
+    total_penalties = 0
+    
+    for row in rows:
+        amount = row[5] if row[5] else row[6]  # total_loan_amount or total_pending_amount
+        penalty = row[11] if row[11] else 0
+        
+        payment = {
+            "id": row[0],
+            "member_id": row[1],
+            "member_name": row[2],
+            "member_phone": row[3],
+            "payment_type": row[4],
+            "amount": float(amount) if amount else 0,
+            "payment_date": row[7].strftime("%Y-%m-%d") if row[7] else None,
+            "due_date": row[8].strftime("%Y-%m-%d") if row[8] else None,
+            "transaction_id": row[9],
+            "days_late": row[10] if row[10] else 0,
+            "penalty_amount": float(penalty),
+            "description": row[12]
+        }
+        
+        payments.append(payment)
+        
+        # Calculate totals
+        if row[4] == 'monthly_contribution':
+            total_contribution += float(amount) if amount else 0
+        elif row[4] == 'loan_installment':
+            total_loan_emi += float(amount) if amount else 0
+        
+        total_penalties += float(penalty)
+    
+    return {
+        "month_year": month_year,
+        "total_payments": len(payments),
+        "summary": {
+            "total_contribution": round(total_contribution, 2),
+            "total_loan_emi": round(total_loan_emi, 2),
+            "total_penalties": round(total_penalties, 2),
+            "grand_total": round(total_contribution + total_loan_emi + total_penalties, 2)
+        },
+        "payments": payments
     }

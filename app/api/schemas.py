@@ -81,6 +81,8 @@ class LoanResponse(BaseModel):
     start_date: date
     end_date: Optional[date]
     description: Optional[str]
+    member_name: Optional[str] = None
+    member_phone: Optional[str] = None
 
 class UserResponseWithPaymentAndLoanHistory(BaseModel):
     id: int

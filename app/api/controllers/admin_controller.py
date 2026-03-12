@@ -18,6 +18,7 @@ from app.api.services.admin_service import (
     get_user_by_phone_with_payment_and_loan_history,
     get_dashboard_stats,
     get_financial_summary,
+    get_payments_by_month,
 )
 from app.api.services.loan_service import approve_loan_application, get_all_loans
 from app.api.middleware.auth_middleware import get_admin_user
@@ -203,14 +204,43 @@ async def get_member_installments(
 @router.get("/member-earnings/{phone}")
 async def get_admin_member_earnings(
     phone: str,
+    month_year: str = None,
     db: Session = Depends(get_db),
     _current_admin: dict = Depends(get_admin_user)
 ):
-    """Get earnings for a specific member by phone"""
+    """
+    Get earnings for a specific member by phone or name
+    Optional month_year parameter (YYYY-MM) to filter by specific month
+    """
     from app.api.services.loan_service import get_member_earnings
     from sqlalchemy import text
-    user = db.execute(text("SELECT id FROM users WHERE phone = :phone"), {"phone": phone}).fetchone()
+    user = db.execute(
+        text("""
+            SELECT id FROM users 
+            WHERE phone = :exact_phone
+            OR phone ILIKE :search
+            OR name ILIKE :search
+            LIMIT 1
+        """), 
+        {"exact_phone": phone, "search": f"%{phone}%"}
+    ).fetchone()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    result = get_member_earnings(db, user.id)
+    result = get_member_earnings(db, user.id, month_year)
     return result
+
+@router.get("/payments-by-month/{month_year}")
+async def get_payments_by_month_endpoint(
+    month_year: str,
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """
+    Get all payments for a specific month-year with member details
+    Format: YYYY-MM (e.g., 2026-03 for March 2026)
+    """
+    try:
+        result = get_payments_by_month(db, month_year)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
