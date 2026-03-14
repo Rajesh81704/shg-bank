@@ -171,9 +171,11 @@ const api = {
         if (data.phone) params.append('phone', data.phone);
         if (data.password) params.append('password', data.password);
         if (data.is_active !== undefined) params.append('is_active', data.is_active);
+        if (data.join_date) params.append('join_date', data.join_date);
         return apiFetch(`/update-user/${userId}?${params.toString()}`, {method:'PUT'});
     },
     paymentsByMonth: monthYear => apiFetch(`/payments-by-month/${monthYear}`),
+    deleteMember: userId => apiFetch(`/delete-member/${userId}`, {method:'DELETE'}),
 };
 
 // ---- Navigation Config (use i18n keys for labels) ----
@@ -697,9 +699,28 @@ async function renderMembers() {
     <div id="allMembersList" style="margin-top:20px"></div>`;
 
     // Load all members automatically
+    loadAllMembers();
+
+    $('memberSearchForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const phone = $('memberSearchPhone').value.trim();
+        if (!phone) return;
+        const resultDiv = $('memberSearchResult');
+        resultDiv.innerHTML = '<div class="skeleton skeleton-card" style="height:100px"></div>';
+        try {
+            const u = await api.userDetails(phone);
+            try {
+                const earn = await api.memberEarnings(phone);
+                u.earnings = earn;
+            } catch(ee) {} // ignore earning error if any
+            resultDiv.innerHTML = renderMemberCard(u);
+        } catch(err) {
+            resultDiv.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">${ICONS.alert}<h3>${t('members.not_found')}</h3><p>${err.message}</p></div></div></div>`;
+        }
+    });
+}
 
 function renderMembersTable(users) {
-
     let usersHtml = `
     <div class="card classy-table-card">
 
@@ -765,7 +786,8 @@ function renderMembersTable(users) {
 
                 <td>
                     <button class="btn btn-sm btn-secondary" onclick="showUpdateUserModalById(${u.id})" style="margin-right:4px;">Edit</button>
-                    <button class="btn btn-sm btn-primary" onclick="showMemberInstallments('${u.phone}')">View</button>
+                    <button class="btn btn-sm btn-primary" onclick="showMemberInstallments('${u.phone}')" style="margin-right:4px;">View</button>
+                    <button class="btn btn-sm btn-danger" onclick="handleDeleteMember(${u.id}, '${u.name}')">Delete</button>
                 </td>
 
             </tr>
@@ -820,27 +842,6 @@ async function loadAllMembers() {
             </div>
         `;
     }
-}
-
-loadAllMembers();
-
-    $('memberSearchForm').addEventListener('submit', async e => {
-        e.preventDefault();
-        const phone = $('memberSearchPhone').value.trim();
-        if (!phone) return;
-        const resultDiv = $('memberSearchResult');
-        resultDiv.innerHTML = '<div class="skeleton skeleton-card" style="height:100px"></div>';
-        try {
-            const u = await api.userDetails(phone);
-            try {
-                const earn = await api.memberEarnings(phone);
-                u.earnings = earn;
-            } catch(ee) {} // ignore earning error if any
-            resultDiv.innerHTML = renderMemberCard(u);
-        } catch(err) {
-            resultDiv.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">${ICONS.alert}<h3>${t('members.not_found')}</h3><p>${err.message}</p></div></div></div>`;
-        }
-    });
 }
 
 function renderMemberCard(u) {
@@ -1030,7 +1031,7 @@ function renderCreateLoan() {
     <div class="card form-card" style="max-width:800px">
         <div class="card-header">
             <h3 class="card-title">💰 Create Loan for Member</h3>
-        </div>Stats
+        </div>
         <div class="card-body">
             <p style="color:var(--gray-600);margin-bottom:24px;">Create and approve a loan on behalf of a member. All installments with due dates before today will be automatically marked as paid.</p>
             
@@ -1396,11 +1397,21 @@ function showCreateUserModal() {
             <div class="form-group-content"><label>${t('create_user.name')}</label><input class="form-input" id="cuName" placeholder="${t('create_user.name_placeholder')}" required></div>
             <div class="form-group-content"><label>${t('login.phone')}</label><input class="form-input" type="tel" id="cuPhone" placeholder="${t('create_user.phone_placeholder')}" required></div>
             <div class="form-group-content"><label>${t('create_user.password')}</label><input class="form-input" id="cuPassword" placeholder="${t('create_user.password_placeholder')}" required></div>
+            <div class="form-group-content"><label>Joining Date</label><input class="form-input" type="date" id="cuJoinDate" value="${new Date().toISOString().split('T')[0]}"></div>
             <div class="form-actions"><button type="submit" class="btn btn-primary btn-full">${t('create_user.submit')}</button></div>
         </form>`);
     $('createUserForm').addEventListener('submit', async e => {
         e.preventDefault();
-        try { await api.createUser({name:$('cuName').value.trim(),phone:$('cuPhone').value.trim(),password:$('cuPassword').value}); showToast(t('create_user.success'),'success'); closeModal(); }
+        try {
+            await api.createUser({
+                name: $('cuName').value.trim(),
+                phone: $('cuPhone').value.trim(),
+                password: $('cuPassword').value,
+                join_date: $('cuJoinDate').value || null
+            });
+            showToast(t('create_user.success'),'success');
+            closeModal();
+        }
         catch(err) { showToast(err.message,'error'); }
     });
 }
@@ -1422,6 +1433,11 @@ function showUpdateUserModal(user) {
                 <small style="color:var(--gray-500);font-size:0.85rem;">Leave empty to keep current password</small>
             </div>
             <div class="form-group-content">
+                <label>Joining Date (optional)</label>
+                <input class="form-input" type="date" id="uuJoinDate" value="${user.join_date ? user.join_date.split('T')[0] : ''}">
+                <small style="color:var(--gray-500);font-size:0.85rem;">Leave empty to keep current joining date</small>
+            </div>
+            <div class="form-group-content">
                 <label>Status</label>
                 <select class="form-input" id="uuActive">
                     <option value="true" ${user.is_active ? 'selected' : ''}>Active</option>
@@ -1441,11 +1457,13 @@ function showUpdateUserModal(user) {
         const name = $('uuName').value.trim();
         const phone = $('uuPhone').value.trim();
         const password = $('uuPassword').value.trim();
+        const joinDate = $('uuJoinDate').value;
         const isActive = $('uuActive').value === 'true';
         
         if (name && name !== user.name) updateData.name = name;
         if (phone && phone !== user.phone) updateData.phone = phone;
         if (password) updateData.password = password;
+        if (joinDate && joinDate !== (user.join_date ? user.join_date.split('T')[0] : '')) updateData.join_date = joinDate;
         if (isActive !== user.is_active) updateData.is_active = isActive;
         
         if (Object.keys(updateData).length === 0) {
@@ -1493,6 +1511,17 @@ function showUpdateUserModalById(userId) {
         return;
     }
     showUpdateUserModal(user);
+}
+
+async function handleDeleteMember(userId, userName) {
+    if (!confirm(`Delete member "${userName}" and ALL their loans and payments? This cannot be undone!`)) return;
+    try {
+        await api.deleteMember(userId);
+        showToast(`Member "${userName}" deleted successfully`, 'success');
+        loadAllMembers();
+    } catch(e) {
+        showToast(e.message, 'error');
+    }
 }
 
 // ============================================================
