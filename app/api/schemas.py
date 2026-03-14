@@ -6,7 +6,6 @@ class UserCreate(BaseModel):
     phone: str
     name: str
     password: str
-    join_date: Optional[date] = None
 
 class UserResponse(BaseModel):
     id: int

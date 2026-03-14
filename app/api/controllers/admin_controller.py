@@ -1,6 +1,4 @@
 """Admin controller for handling admin-related endpoints"""
-from datetime import date
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 

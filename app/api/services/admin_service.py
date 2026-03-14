@@ -100,7 +100,7 @@ def create_user_account(db: Session, user_data: UserCreate) -> dict:
             "name": user_data.name,
             "password": user_data.password,
             "is_admin": False,
-            "join_date": user_data.join_date if user_data.join_date else date.today(),
+            "join_date": date.today(),
             "is_active": True
         }
     )
@@ -828,7 +828,7 @@ def get_payments_by_month(db: Session, month_year: str):
 
 
 def update_user_details(db: Session, user_id: int, name: str = None, phone: str = None, 
-                       password: str = None, is_active: bool = None, join_date: date = None):
+                       password: str = None, is_active: bool = None):
     """
     Update user details (admin only)
     Only provided fields will be updated
@@ -869,10 +869,6 @@ def update_user_details(db: Session, user_id: int, name: str = None, phone: str 
     if is_active is not None:
         update_fields.append("is_active = :is_active")
         params["is_active"] = is_active
-    
-    if join_date is not None:
-        update_fields.append("join_date = :join_date")
-        params["join_date"] = join_date
     
     if not update_fields:
         raise ValueError("No fields to update")
