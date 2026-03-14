@@ -4,6 +4,7 @@
 
 const API = '/api';
 const state = { token: localStorage.getItem('token'), user: null, view: 'dashboard', lang: localStorage.getItem('lang') || 'en' };
+const userCache = {};
 
 const ICONS = {
     dashboard: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
@@ -164,6 +165,15 @@ const api = {
     emiAlert: () => apiFetch('/api/user/emi_alert'),
     memberInstallments: phone => apiFetch('/member-installments/' + phone),
     createLoan: d => apiFetch(`/create-loan-for-member?phone=${d.phone}&amount=${d.amount}&interest_rate=${d.interest_rate}&installments=${d.installments}&start_date=${d.start_date}&description=${d.description||''}`, {method:'POST'}),
+    updateUser: (userId, data) => {
+        const params = new URLSearchParams();
+        if (data.name) params.append('name', data.name);
+        if (data.phone) params.append('phone', data.phone);
+        if (data.password) params.append('password', data.password);
+        if (data.is_active !== undefined) params.append('is_active', data.is_active);
+        return apiFetch(`/update-user/${userId}?${params.toString()}`, {method:'PUT'});
+    },
+    paymentsByMonth: monthYear => apiFetch(`/payments-by-month/${monthYear}`),
 };
 
 // ---- Navigation Config (use i18n keys for labels) ----
@@ -172,6 +182,7 @@ const adminNav = [
     { id:'members', labelKey:'nav.members', icon:'members' },
     { id:'loans', labelKey:'nav.all_loans', icon:'loans' },
     { id:'createLoan', labelKey:'nav.create_loan', icon:'apply' },
+    { id:'monthlyPayments', labelKey:'nav.monthly_payments', icon:'payments' },
     { id:'financialSummary', labelKey:'nav.financial_summary', icon:'summary' },
     { id:'calculator', labelKey:'nav.emi_calculator', icon:'calculator' },
     { id:'resetPassword', labelKey:'nav.reset_password', icon:'resetPw' },
@@ -282,7 +293,7 @@ function navigate(view, data) {
     const titleKeys = { dashboard:'page.dashboard', members:'page.members', loans:'page.all_loans', resetPassword:'page.reset_password',
         financialSummary:'page.financial_summary', myInstallments:'page.my_installments', applyLoan:'page.apply_loan',
         calculator:'page.emi_calculator', payContribution:'page.pay_contribution', memberDetail:'page.member_details',
-        myEarnings:'page.my_earnings', createLoan:'page.create_loan' };
+        myEarnings:'page.my_earnings', createLoan:'page.create_loan', monthlyPayments:'page.monthly_payments' };
     $('pageTitle').textContent = t(titleKeys[view] || 'page.dashboard');
         const name = state.user ? (state.user.name || state.user.username) : '';
     const hour = new Date().getHours();
@@ -307,6 +318,7 @@ function navigate(view, data) {
         dashboard: isAdmin ? renderAdminDashboard : renderUserDashboard,
         members: renderMembers, loans: renderLoans, resetPassword: renderResetPassword,
         financialSummary: renderFinancialSummary, createLoan: renderCreateLoan,
+        monthlyPayments: renderMonthlyPayments,
         myInstallments: renderMyInstallments, applyLoan: renderApplyLoan,
         calculator: renderCalculator, payContribution: renderPayContribution,
         memberDetail: () => renderMemberDetail(data), myEarnings: renderMyEarnings,
@@ -339,8 +351,8 @@ async function renderAdminDashboard() {
             <div class="card-body">
                 <form id="dashboardMemberSearch" style="display:flex;gap:12px;align-items:flex-end">
                     <div class="form-group-content" style="flex:1;margin-bottom:0">
-                        <label>Phone Number</label>
-                        <input class="form-input" type="tel" id="dashMemberPhone" placeholder="Enter phone number" required>
+                        <label>Member Name</label>
+                        <input class="form-input" type="text" id="dashMemberPhone" placeholder="Enter member name" required>
                     </div>
                     <button type="submit" class="btn btn-primary" style="height:38px">Search</button>
                 </form>
@@ -357,12 +369,12 @@ async function renderAdminDashboard() {
                 <div class="table-wrapper">
                     <table class="data-table">
                         <thead><tr>
-                            <th>Loan ID</th><th>Member ID</th><th>Amount</th><th>Rate</th><th>EMIs</th><th>Status</th><th>Actions</th>
+                            <th>Loan ID</th><th>Member Name</th><th>Amount</th><th>Rate</th><th>EMIs</th><th>Status</th><th>Actions</th>
                         </tr></thead>
                         <tbody>
                         ${pendingLoans.map(l=>`<tr>
                             <td class="cell-primary">#${l.id}</td>
-                            <td><b>Member ${l.member_id}</b></td>
+                            <td><b>${l.member_name || 'Member ' + l.member_id}</b> <small style="color:var(--gray-500)">(#${l.member_id})</small><br><small style="color:var(--gray-500)">${l.member_phone || ''}</small></td>
                             <td class="cell-primary">${formatCurrency(l.amount)}</td>
                             <td>${l.interest_rate}%</td>
                             <td>${l.installments}</td>
@@ -387,12 +399,12 @@ async function renderAdminDashboard() {
                 <div class="table-wrapper">
                     <table class="data-table">
                         <thead><tr>
-                            <th>Loan ID</th><th>Member ID</th><th>Amount</th><th>Rate</th><th>EMIs</th><th>Status</th><th>Start Date</th><th>Actions</th>
+                            <th>Loan ID</th><th>Member Name</th><th>Amount</th><th>Rate</th><th>EMIs</th><th>Status</th><th>Start Date</th><th>Actions</th>
                         </tr></thead>
                         <tbody>
                         ${activeLoans.slice(0, 10).map(l=>`<tr>
                             <td class="cell-primary">#${l.id}</td>
-                            <td><b>Member ${l.member_id}</b></td>
+                            <td><b>${l.member_name || 'Member ' + l.member_id}</b> <small style="color:var(--gray-500)">(#${l.member_id})</small><br><small style="color:var(--gray-500)">${l.member_phone || ''}</small></td>
                             <td class="cell-primary">${formatCurrency(l.amount)}</td>
                             <td>${l.interest_rate}%</td>
                             <td>${l.installments}</td>
@@ -424,14 +436,33 @@ async function renderAdminDashboard() {
         // Attach event listener for member search
         $('dashboardMemberSearch').addEventListener('submit', async e => {
             e.preventDefault();
-            const phone = $('dashMemberPhone').value.trim();
-            if (!phone) return;
+            const searchTerm = $('dashMemberPhone').value.trim();
+            if (!searchTerm) return;
             const resultDiv = $('dashMemberResult');
             resultDiv.innerHTML = '<div class="skeleton skeleton-card" style="height:100px"></div>';
             try {
-                const u = await api.userDetails(phone);
-                try { const earn = await api.memberEarnings(phone); u.earnings = earn; } catch(ee) {}
-                resultDiv.innerHTML = renderMemberCardDashboard(u);
+                // Check if search term is digits only (phone) or contains letters (name)
+                const isPhone = /^\d+$/.test(searchTerm);
+                let u;
+                if (isPhone) {
+                    u = await api.userDetails(searchTerm);
+                    try { const earn = await api.memberEarnings(searchTerm); u.earnings = earn; } catch(ee) {}
+                } else {
+                    // Search by name - get all users and filter
+                    const users = await api.allUsers();
+                    const matchedUser = users.find(user => 
+                        user.name && user.name.toLowerCase().includes(searchTerm.toLowerCase())
+                    );
+                    if (matchedUser) {
+                        u = await api.userDetails(matchedUser.phone);
+                        try { const earn = await api.memberEarnings(matchedUser.phone); u.earnings = earn; } catch(ee) {}
+                    }
+                }
+                if (u) {
+                    resultDiv.innerHTML = renderMemberCardDashboard(u);
+                } else {
+                    resultDiv.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">${ICONS.alert}<h3>Member Not Found</h3><p>No member found matching "${searchTerm}"</p></div></div></div>`;
+                }
             } catch(err) {
                 resultDiv.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">${ICONS.alert}<h3>Member Not Found</h3><p>${err.message}</p></div></div></div>`;
             }
@@ -463,11 +494,17 @@ async function handleDeleteLoanDash(loanId) {
 }
 
 function renderMemberCardDashboard(u) {
+    // Cache user for edit functionality
+    userCache[u.id] = u;
+    
     return `
     <div class="card" style="margin-top:20px;">
         <div class="card-header">
             <h3 class="card-title">Member Profile</h3>
-            <button class="btn btn-primary btn-sm" onclick="showMemberInstallmentsDash('${u.phone}')">View All Installments</button>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-secondary btn-sm" onclick="showUpdateUserModalById(${u.id})">Edit User</button>
+                <button class="btn btn-primary btn-sm" onclick="showMemberInstallmentsDash('${u.phone}')">View All Installments</button>
+            </div>
         </div>
         <div class="card-body">
             <div class="detail-header" style="margin-bottom:16px">
@@ -537,12 +574,12 @@ async function showMemberInstallmentsDash(phone) {
         const data = await api.memberInstallments(phone);
         let html = `<div style="max-height:70vh;overflow-y:auto;">`;
         
-        if(!data.loans || data.loans.length === 0) {
+        if(!data || !data.loans || data.loans.length === 0) {
             html += `<div class="empty-state">${ICONS.money}<h3>No Loans Found</h3><p>This member has no loans yet.</p></div>`;
         } else {
             data.loans.forEach(loan => {
-                const pendingInst = loan.installments.filter(i => !i.payment_date);
-                const paidInst = loan.installments.filter(i => i.payment_date);
+                const pendingInst = loan.installments?.pending || [];
+                const paidInst = loan.installments?.paid || [];
                 
                 html += `
                 <div class="card" style="margin-bottom:20px; border: 2px solid var(--purple-500);">
@@ -660,6 +697,7 @@ async function renderMembers() {
     <div id="allMembersList" style="margin-top:20px"></div>`;
 
     // Load all members automatically
+
 function renderMembersTable(users) {
 
     let usersHtml = `
@@ -684,6 +722,7 @@ function renderMembersTable(users) {
                             <th>Role</th>
                             <th>Status</th>
                             <th>Joined</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
 
@@ -691,7 +730,9 @@ function renderMembersTable(users) {
     `;
 
     users.forEach(u => {
-
+        // Cache user data for edit functionality
+        userCache[u.id] = u;
+        
         usersHtml += `
             <tr>
 
@@ -721,6 +762,11 @@ function renderMembersTable(users) {
                 </td>
 
                 <td>${formatDate(u.join_date)}</td>
+
+                <td>
+                    <button class="btn btn-sm btn-secondary" onclick="showUpdateUserModalById(${u.id})" style="margin-right:4px;">Edit</button>
+                    <button class="btn btn-sm btn-primary" onclick="showMemberInstallments('${u.phone}')">View</button>
+                </td>
 
             </tr>
         `;
@@ -798,6 +844,9 @@ loadAllMembers();
 }
 
 function renderMemberCard(u) {
+    // Cache user for edit functionality
+    userCache[u.id] = u;
+    
     let earnHtml = '';
     if(u.earnings) {
         let e = u.earnings.earnings || {interest_share:0, penalty_share:0};
@@ -829,7 +878,10 @@ function renderMemberCard(u) {
     <div class="card section-gap">
         <div class="card-header">
             <h3 class="card-title">${t('members.profile')}</h3>
-            <button class="btn btn-primary btn-sm" onclick="showMemberInstallments('${u.phone}')">View All Installments</button>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-secondary btn-sm" onclick="showUpdateUserModalById(${u.id})">Edit User</button>
+                <button class="btn btn-primary btn-sm" onclick="showMemberInstallments('${u.phone}')">View All Installments</button>
+            </div>
         </div>
         <div class="card-body">
             <div class="detail-header" style="margin-bottom:16px">
@@ -862,10 +914,10 @@ async function renderLoans() {
         <div class="card section-gap"><div class="card-header"><h3 class="card-title">Active Loans (${activeLoans.length})</h3></div>
         <div class="card-body no-padding"><div class="table-wrapper">
             <table class="data-table"><thead><tr>
-                <th>${t('table.id')}</th><th>Member ID</th><th>${t('table.amount')}</th><th>${t('table.rate')}</th><th>${t('table.emis')}</th><th>${t('table.status')}</th><th>${t('table.start')}</th><th>Action</th>
+                <th>${t('table.id')}</th><th>Member Name</th><th>${t('table.amount')}</th><th>${t('table.rate')}</th><th>${t('table.emis')}</th><th>${t('table.status')}</th><th>${t('table.start')}</th><th>Action</th>
             </tr></thead><tbody>
             ${activeLoans.length === 0 ? `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--gray-400)">No Active Loans</td></tr>` : activeLoans.map(l=>`<tr>
-                <td class="cell-primary">#${l.id}</td><td><b>Member ${l.member_id}</b></td><td class="cell-primary">${formatCurrency(l.amount)}</td>
+                <td class="cell-primary">#${l.id}</td><td><b>${l.member_name || 'Member ' + l.member_id}</b> <small style="color:var(--gray-500)">(#${l.member_id})</small><br><small style="color:var(--gray-500)">${l.member_phone || ''}</small></td><td class="cell-primary">${formatCurrency(l.amount)}</td>
                 <td>${l.interest_rate}%</td><td>${l.installments}</td>
                 <td>${statusBadge(l.status)}</td><td>${formatDate(l.start_date)}</td>
                 <td><button class="btn btn-danger btn-sm" onclick="handleDeleteLoanFromList(${l.id})">Delete</button></td>
@@ -876,10 +928,10 @@ async function renderLoans() {
         <div class="card"><div class="card-header"><h3 class="card-title">Pending Loans (${pendingLoans.length})</h3></div>
         <div class="card-body no-padding"><div class="table-wrapper">
             <table class="data-table"><thead><tr>
-                <th>${t('table.id')}</th><th>Member ID</th><th>${t('table.amount')}</th><th>${t('table.rate')}</th><th>${t('table.emis')}</th><th>${t('table.status')}</th><th>${t('table.action')}</th>
+                <th>${t('table.id')}</th><th>Member Name</th><th>${t('table.amount')}</th><th>${t('table.rate')}</th><th>${t('table.emis')}</th><th>${t('table.status')}</th><th>${t('table.action')}</th>
             </tr></thead><tbody>
             ${pendingLoans.length === 0 ? `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--gray-400)">${t('loans.no_loans')}</td></tr>` : pendingLoans.map(l=>`<tr>
-                <td class="cell-primary">#${l.id}</td><td><b>Member ${l.member_id}</b></td><td class="cell-primary">${formatCurrency(l.amount)}</td>
+                <td class="cell-primary">#${l.id}</td><td><b>${l.member_name || 'Member ' + l.member_id}</b> <small style="color:var(--gray-500)">(#${l.member_id})</small><br><small style="color:var(--gray-500)">${l.member_phone || ''}</small></td><td class="cell-primary">${formatCurrency(l.amount)}</td>
                 <td>${l.interest_rate}%</td><td>${l.installments}</td>
                 <td>${statusBadge(l.status)}</td>
                 <td><button class="btn btn-success btn-sm" onclick="handleApproveLoan(${l.id})">${ICONS.check} ${t('loans.approve')}</button></td>
@@ -978,14 +1030,14 @@ function renderCreateLoan() {
     <div class="card form-card" style="max-width:800px">
         <div class="card-header">
             <h3 class="card-title">💰 Create Loan for Member</h3>
-        </div>
+        </div>Stats
         <div class="card-body">
             <p style="color:var(--gray-600);margin-bottom:24px;">Create and approve a loan on behalf of a member. All installments with due dates before today will be automatically marked as paid.</p>
             
             <form id="createLoanPageForm">
                 <div class="form-group-content">
                     <label>Member Phone Number</label>
-                    <input class="form-input" type="tel" id="clpPhone" placeholder="Enter member's phone number" required>
+                    <input class="form-input" type="tel" id="clpPhone" placeholder="Enter member's name" required>
                 </div>
                 
                 <div class="form-row">
@@ -1147,6 +1199,197 @@ async function previewLoan() {
     }
 }
 
+async function renderMonthlyPayments() {
+    const c = $('contentArea');
+    
+    // Get current month-year as default
+    const now = new Date();
+    const currentMonthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    
+    c.innerHTML = `
+    <div class="card form-card" style="max-width:600px">
+        <div class="card-header">
+            <h3 class="card-title">📅 Select Month</h3>
+        </div>
+        <div class="card-body">
+            <form id="monthSelectForm" style="display:flex;gap:12px;align-items:flex-end;">
+                <div class="form-group-content" style="flex:1;margin-bottom:0;">
+                    <label>Month-Year (YYYY-MM)</label>
+                    <input class="form-input" type="month" id="monthYearInput" value="${currentMonthYear}" required>
+                    <small style="color:var(--gray-500);font-size:0.85rem;">Select month to view all payments</small>
+                </div>
+                <button type="submit" class="btn btn-primary" style="height:38px;">View Payments</button>
+            </form>
+        </div>
+    </div>
+    <div id="monthlyPaymentsResult"></div>`;
+    
+    // Auto-load current month
+    loadMonthlyPayments(currentMonthYear);
+    
+    $('monthSelectForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const monthYear = $('monthYearInput').value;
+        loadMonthlyPayments(monthYear);
+    });
+}
+
+async function loadMonthlyPayments(monthYear) {
+    const resultDiv = $('monthlyPaymentsResult');
+    resultDiv.innerHTML = '<div class="skeleton skeleton-card" style="height:200px;margin-top:20px;"></div>';
+    
+    try {
+        const data = await api.paymentsByMonth(monthYear);
+        
+        // Parse month-year for display
+        const [year, month] = monthYear.split('-');
+        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                           'July', 'August', 'September', 'October', 'November', 'December'];
+        const displayMonth = `${monthNames[parseInt(month) - 1]} ${year}`;
+        
+        resultDiv.innerHTML = `
+        <div class="stats-grid section-gap">
+            ${statCard('Total Payments', data.total_payments, 'Transactions', 'purple', ICONS.wallet)}
+            ${statCard('Contributions', formatCurrency(data.summary.total_contribution), 'Monthly dues', 'green', ICONS.contribution)}
+            ${statCard('Loan EMIs', formatCurrency(data.summary.total_loan_emi), 'Installments', 'blue', ICONS.money)}
+            ${statCard('Penalties', formatCurrency(data.summary.total_penalties), 'Late fees', 'red', ICONS.alert)}
+        </div>
+        
+        <div class="card section-gap">
+            <div class="card-header">
+                <h3 class="card-title">💰 Grand Total</h3>
+            </div>
+            <div class="card-body" style="text-align:center;">
+                <div style="font-size:2.5rem;font-weight:700;color:var(--purple-600);margin:20px 0;">
+                    ${formatCurrency(data.summary.grand_total)}
+                </div>
+                <p style="color:var(--gray-600);">Total collected in ${displayMonth}</p>
+            </div>
+        </div>
+        
+        ${(data.payments && data.payments.length > 0) ? `
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">📋 Payment Details (${data.total_payments})</h3>
+                <button class="btn btn-secondary btn-sm" onclick="exportPaymentsToCSV('${monthYear}')">Export CSV</button>
+            </div>
+            <div class="card-body no-padding">
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Member</th>
+                                <th>Phone</th>
+                                <th>Type</th>
+                                <th>Amount</th>
+                                <th>Penalty</th>
+                                <th>Days Late</th>
+                                <th>Transaction ID</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        ${data.payments.map(p => `<tr>
+                            <td>${formatDate(p.payment_date)}</td>
+                            <td class="cell-primary">${p.member_name}</td>
+                            <td class="cell-mono">${p.member_phone}</td>
+                            <td>${p.payment_type === 'monthly_contribution' 
+                                ? '<span class="badge badge-info"><span class="badge-dot"></span>Contribution</span>' 
+                                : '<span class="badge badge-neutral"><span class="badge-dot"></span>Loan EMI</span>'}</td>
+                            <td class="cell-primary">${formatCurrency(p.amount)}</td>
+                            <td>${p.penalty_amount > 0 ? formatCurrency(p.penalty_amount) : '—'}</td>
+                            <td>${p.days_late > 0 ? p.days_late + ' days' : '—'}</td>
+                            <td class="cell-mono" style="font-size:0.85rem;">${p.transaction_id || '—'}</td>
+                        </tr>`).join('')}
+                        </tbody>
+                        <tfoot>
+                            <tr style="font-weight:600;background:var(--purple-50);">
+                                <td colspan="4" style="text-align:right;padding-right:20px;">TOTAL:</td>
+                                <td class="cell-primary">${formatCurrency(data.summary.total_contribution + data.summary.total_loan_emi)}</td>
+                                <td>${formatCurrency(data.summary.total_penalties)}</td>
+                                <td colspan="2"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>` : `
+        <div class="card">
+            <div class="card-body">
+                <div class="empty-state">
+                    ${ICONS.wallet}
+                    <h3>No Payments Found</h3>
+                    <p>No payments were recorded in ${displayMonth}</p>
+                </div>
+            </div>
+        </div>`}`;
+        
+    } catch(err) {
+        console.error('Error loading monthly payments:', err);
+        resultDiv.innerHTML = `
+        <div class="card section-gap">
+            <div class="card-body">
+                <div class="empty-state">
+                    ${ICONS.alert}
+                    <h3>Unable to Load Payments</h3>
+                    <p>Could not retrieve payment data for the selected month.</p>
+                    <p style="font-size:0.85rem;color:var(--gray-500);margin-top:8px;">${err.message || 'Please try again or select a different month.'}</p>
+                    <button class="btn btn-primary" style="margin-top:16px;" onclick="loadMonthlyPayments('${monthYear}')">Retry</button>
+                </div>
+            </div>
+        </div>`;
+    }
+}
+
+function exportPaymentsToCSV(monthYear) {
+    api.paymentsByMonth(monthYear).then(data => {
+        if (!data.payments || data.payments.length === 0) {
+            showToast('No payments to export', 'warning');
+            return;
+        }
+        
+        // Create CSV content
+        const headers = ['Date', 'Member Name', 'Phone', 'Type', 'Amount', 'Penalty', 'Days Late', 'Transaction ID', 'Description'];
+        const rows = data.payments.map(p => [
+            p.payment_date,
+            p.member_name,
+            p.member_phone,
+            p.payment_type === 'monthly_contribution' ? 'Contribution' : 'Loan EMI',
+            p.amount,
+            p.penalty_amount || 0,
+            p.days_late || 0,
+            p.transaction_id || '',
+            p.description || ''
+        ]);
+        
+        let csv = headers.join(',') + '\n';
+        rows.forEach(row => {
+            csv += row.map(cell => `"${cell}"`).join(',') + '\n';
+        });
+        
+        // Add summary
+        csv += '\n';
+        csv += `"SUMMARY",,,,,,,,\n`;
+        csv += `"Total Contributions",,,,"${data.summary.total_contribution}",,,,\n`;
+        csv += `"Total Loan EMIs",,,,"${data.summary.total_loan_emi}",,,,\n`;
+        csv += `"Total Penalties",,,,"${data.summary.total_penalties}",,,,\n`;
+        csv += `"Grand Total",,,,"${data.summary.grand_total}",,,,\n`;
+        
+        // Download
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `payments_${monthYear}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        
+        showToast('CSV exported successfully', 'success');
+    }).catch(err => {
+        showToast('Export failed: ' + err.message, 'error');
+    });
+}
+
 function showCreateUserModal() {
     openModal(t('create_user.title'), `
         <form id="createUserForm">
@@ -1160,6 +1403,96 @@ function showCreateUserModal() {
         try { await api.createUser({name:$('cuName').value.trim(),phone:$('cuPhone').value.trim(),password:$('cuPassword').value}); showToast(t('create_user.success'),'success'); closeModal(); }
         catch(err) { showToast(err.message,'error'); }
     });
+}
+
+function showUpdateUserModal(user) {
+    openModal('Update User Details', `
+        <form id="updateUserForm">
+            <div class="form-group-content">
+                <label>Name (optional)</label>
+                <input class="form-input" id="uuName" placeholder="Enter new name or leave empty" value="${user.name || ''}">
+            </div>
+            <div class="form-group-content">
+                <label>Phone (optional)</label>
+                <input class="form-input" type="tel" id="uuPhone" placeholder="Enter new phone or leave empty" value="${user.phone || ''}">
+            </div>
+            <div class="form-group-content">
+                <label>Password (optional)</label>
+                <input class="form-input" type="password" id="uuPassword" placeholder="Enter new password or leave empty">
+                <small style="color:var(--gray-500);font-size:0.85rem;">Leave empty to keep current password</small>
+            </div>
+            <div class="form-group-content">
+                <label>Status</label>
+                <select class="form-input" id="uuActive">
+                    <option value="true" ${user.is_active ? 'selected' : ''}>Active</option>
+                    <option value="false" ${!user.is_active ? 'selected' : ''}>Inactive</option>
+                </select>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-full">Update User</button>
+            </div>
+        </form>
+    `);
+    
+    $('updateUserForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const updateData = {};
+        
+        const name = $('uuName').value.trim();
+        const phone = $('uuPhone').value.trim();
+        const password = $('uuPassword').value.trim();
+        const isActive = $('uuActive').value === 'true';
+        
+        if (name && name !== user.name) updateData.name = name;
+        if (phone && phone !== user.phone) updateData.phone = phone;
+        if (password) updateData.password = password;
+        if (isActive !== user.is_active) updateData.is_active = isActive;
+        
+        if (Object.keys(updateData).length === 0) {
+            showToast('No changes to update', 'warning');
+            return;
+        }
+        
+        try {
+            await api.updateUser(user.id, updateData);
+            showToast('User updated successfully', 'success');
+            closeModal();
+            
+            // Refresh the member details if we're on the members page
+            const phone = $('memberSearchPhone')?.value.trim();
+            if (phone) {
+                const u = await api.userDetails(phone);
+                try { const earn = await api.memberEarnings(phone); u.earnings = earn; } catch(ee) {}
+                $('memberSearchResult').innerHTML = renderMemberCard(u);
+            }
+            
+            // Refresh the all members list if it exists
+            const allMembersList = $('allMembersList');
+            if (allMembersList && state.view === 'members') {
+                loadAllMembers();
+            }
+            
+            // Refresh dashboard search if it exists
+            const dashMemberPhone = $('dashMemberPhone')?.value.trim();
+            if (dashMemberPhone) {
+                const u = await api.userDetails(dashMemberPhone);
+                try { const earn = await api.memberEarnings(dashMemberPhone); u.earnings = earn; } catch(ee) {}
+                $('dashMemberResult').innerHTML = renderMemberCardDashboard(u);
+            }
+        } catch(err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+// Helper function to get user from cache and show modal
+function showUpdateUserModalById(userId) {
+    const user = userCache[userId];
+    if (!user) {
+        showToast('Error loading user data', 'error');
+        return;
+    }
+    showUpdateUserModal(user);
 }
 
 // ============================================================
@@ -1534,12 +1867,12 @@ async function showMemberInstallments(phone) {
             <button class="btn btn-secondary btn-sm" onclick="navigate('members')">Back to Members</button>
         </div><div class="card-body">`;
         
-        if(!data.loans || data.loans.length === 0) {
+        if(!data || !data.loans || data.loans.length === 0) {
             html += `<div class="empty-state">${ICONS.money}<h3>No Loans Found</h3><p>This member has no loans yet.</p></div>`;
         } else {
             data.loans.forEach(loan => {
-                const pendingInst = loan.installments.filter(i => !i.payment_date);
-                const paidInst = loan.installments.filter(i => i.payment_date);
+                const pendingInst = loan.installments?.pending || [];
+                const paidInst = loan.installments?.paid || [];
                 
                 html += `
                 <div class="card" style="margin-bottom:20px; border: 2px solid var(--purple-500);">
@@ -1590,6 +1923,8 @@ async function showMemberInstallments(phone) {
         html += `</div></div>`;
         openModal(`Installments for ${phone}`, html);
     } catch(e) {
+        console.error('Error loading installments:', e);
+        alert('Error: ' + e.message);
         showToast(e.message, 'error');
     }
 }
