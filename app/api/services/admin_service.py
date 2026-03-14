@@ -900,24 +900,3 @@ def update_user_details(db: Session, user_id: int, name: str = None, phone: str 
             "is_active": updated_user[5]
         }
     }
-
-
-def delete_member(db: Session, user_id: int):
-    """Delete a member and all their associated data (loans, payments)"""
-    result = db.execute(
-        text("SELECT id, name, phone FROM users WHERE id = :user_id"),
-        {"user_id": user_id}
-    )
-    user = result.fetchone()
-    if not user:
-        raise ValueError("Member not found")
-
-    # Delete payments first (foreign key constraint)
-    db.execute(text("DELETE FROM payments WHERE member_id = :user_id"), {"user_id": user_id})
-    # Delete loans
-    db.execute(text("DELETE FROM loans WHERE member_id = :user_id"), {"user_id": user_id})
-    # Delete user
-    db.execute(text("DELETE FROM users WHERE id = :user_id"), {"user_id": user_id})
-    db.commit()
-
-    return {"message": f"Member '{user[1]}' ({user[2]}) and all associated data deleted successfully"}

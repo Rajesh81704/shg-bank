@@ -22,7 +22,6 @@ from app.api.services.admin_service import (
     get_financial_summary,
     get_payments_by_month,
     update_user_details,
-    delete_member,
 )
 from app.api.services.loan_service import approve_loan_application, get_all_loans
 from app.api.middleware.auth_middleware import get_admin_user
@@ -257,7 +256,6 @@ async def update_user(
     phone: str = None,
     password: str = None,
     is_active: bool = None,
-    join_date: date = None,
     db: Session = Depends(get_db),
     _current_admin: dict = Depends(get_admin_user)
 ):
@@ -266,21 +264,7 @@ async def update_user(
     All parameters are optional - only provided fields will be updated
     """
     try:
-        result = update_user_details(db, user_id, name, phone, password, is_active, join_date)
+        result = update_user_details(db, user_id, name, phone, password, is_active)
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-
-
-@router.delete("/delete-member/{user_id}")
-async def delete_member_endpoint(
-    user_id: int,
-    db: Session = Depends(get_db),
-    _current_admin: dict = Depends(get_admin_user)
-):
-    """Delete a member and all their loans and payments (admin only)"""
-    try:
-        result = delete_member(db, user_id)
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
