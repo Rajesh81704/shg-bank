@@ -190,6 +190,7 @@ const adminNav = [
     { id:'members', labelKey:'nav.members', icon:'members' },
     { id:'loans', labelKey:'nav.all_loans', icon:'loans' },
     { id:'createLoan', labelKey:'nav.create_loan', icon:'apply' },
+    { id:'payContribution', labelKey:'nav.pay_contribution', icon:'contribution' },
     { id:'monthlyPayments', labelKey:'nav.monthly_payments', icon:'payments' },
     { id:'financialSummary', labelKey:'nav.financial_summary', icon:'summary' },
     { id:'calculator', labelKey:'nav.emi_calculator', icon:'calculator' },
@@ -1810,40 +1811,145 @@ function renderCalculator() {
 }
 
 function renderPayContribution() {
-    $('contentArea').innerHTML = `
-    <div class="card form-card"><div class="card-header"><h3 class="card-title">${t('contrib.title')}</h3></div><div class="card-body">
-        <div style="background:var(--purple-50);padding:16px;border-radius:var(--radius-sm);margin-bottom:20px">
-            <strong>${t('contrib.monthly')} ${formatCurrency(1000)}</strong><br>
-            <span style="font-size:0.85rem;color:var(--gray-500)">${t('contrib.due_note')}</span>
-        </div>
-        <div style="background:var(--purple-50);padding:16px;border-radius:var(--radius-sm);margin-bottom:20px;text-align:center">
-            <strong>Scan to Pay: ${formatCurrency(1000)}</strong><br>
-            <span style="font-size:0.85rem;color:var(--gray-500)">Monthly Contribution</span>
-            <div style="margin:20px auto; width: 170px; height: 170px; background: white; padding: 10px; border-radius: 8px;">
-                <img src="/static/QRCode.png" alt="QR Code" style="width: 150px; height: 150px; border-radius: 4px;">
+    const isAdmin = state.user.role === 'admin';
+    const now = new Date();
+    const currentMonthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    
+    if (isAdmin) {
+        // Admin version - pay on behalf of member
+        $('contentArea').innerHTML = `
+        <div class="card form-card" style="max-width:600px"><div class="card-header"><h3 class="card-title">💵 Pay Contribution for Member</h3></div><div class="card-body">
+            <form id="adminContribForm">
+                <div class="form-group-content">
+                    <label>Member Phone or Name</label>
+                    <input class="form-input" type="text" id="contribPhone" placeholder="Enter member phone or name" required>
+                </div>
+                <div class="form-group-content">
+                    <label>Month-Year (YYYY-MM)</label>
+                    <input class="form-input" type="month" id="contribMonthYear" value="${currentMonthYear}" required>
+                </div>
+                <div class="form-group-content">
+                    <label>Transaction ID (optional)</label>
+                    <input class="form-input" type="text" id="contribTxn" placeholder="Enter transaction ID or leave empty for auto-generate">
+                </div>
+                <div class="form-actions"><button type="submit" class="btn btn-success btn-full">Record Payment</button></div>
+            </form>
+        </div></div>
+        <div class="card" style="margin-top:20px"><div class="card-header"><h3 class="card-title">Recent Contributions</h3></div><div class="card-body">
+            <div id="contribList">Loading...</div>
+        </div></div>`;
+        
+        loadRecentContributions();
+        
+        $('adminContribForm').addEventListener('submit', async e => {
+            e.preventDefault();
+            try {
+                const phone = $('contribPhone').value.trim();
+                const monthYear = $('contribMonthYear').value;
+                const txnId = $('contribTxn').value.trim();
+                
+                const r = await api.adminPayContribution(phone, monthYear, txnId || null);
+                showToast('Contribution recorded successfully', 'success');
+                openModal('Payment Recorded', `
+                    <div class="info-grid">
+                        <div class="info-item"><div class="info-label">Member</div><div class="info-value">${r.member_name}</div></div>
+                        <div class="info-item"><div class="info-label">Month</div><div class="info-value">${r.month_year}</div></div>
+                        <div class="info-item"><div class="info-label">Amount</div><div class="info-value">${formatCurrency(r.contribution_amount)}</div></div>
+                        <div class="info-item"><div class="info-label">Transaction ID</div><div class="info-value">${r.transaction_id || 'Auto-generated'}</div></div>
+                    </div>`);
+                $('adminContribForm').reset();
+                $('contribMonthYear').value = currentMonthYear;
+                loadRecentContributions();
+            } catch(err) { showToast(err.message, 'error'); }
+        });
+    } else {
+        // Regular user version
+        $('contentArea').innerHTML = `
+        <div class="card form-card"><div class="card-header"><h3 class="card-title">${t('contrib.title')}</h3></div><div class="card-body">
+            <div style="background:var(--purple-50);padding:16px;border-radius:var(--radius-sm);margin-bottom:20px">
+                <strong>${t('contrib.monthly')} ${formatCurrency(1000)}</strong><br>
+                <span style="font-size:0.85rem;color:var(--gray-500)">${t('contrib.due_note')}</span>
             </div>
-            <p style="font-size:0.9rem; margin-top: 10px;">Scan using any UPI App</p>
-        </div>
-        <form id="contribForm">
-            <div class="form-group-content"><label>Or enter Transaction ID manually (if testing)</label><input class="form-input" id="contribTxn" placeholder="Enter transaction ID" value="QR_SCANNED_TXN_01" required></div>
-            <div class="form-actions"><button type="submit" class="btn btn-success">Confirm Payment</button></div>
-        </form>
-    </div></div>`;
-    $('contribForm').addEventListener('submit', async e => {
-        e.preventDefault();
-        try {
-            const r = await api.payContribution($('contribTxn').value.trim());
-            showToast(t('contrib.success'),'success');
-            openModal(t('contrib.success_title'), `
-                <div class="info-grid">
-                    <div class="info-item"><div class="info-label">${t('common.amount')}</div><div class="info-value">${formatCurrency(r.contribution_amount)}</div></div>
-                    <div class="info-item"><div class="info-label">${t('common.penalty')}</div><div class="info-value">${formatCurrency(r.penalty_amount)}</div></div>
-                    <div class="info-item"><div class="info-label">${t('common.total_paid')}</div><div class="info-value">${formatCurrency(r.total_paid)}</div></div>
-                    <div class="info-item"><div class="info-label">${t('common.date')}</div><div class="info-value">${formatDate(r.payment_date)}</div></div>
-                </div>`);
-            $('contribForm').reset();
-        } catch(err) { showToast(err.message,'error'); }
-    });
+            <div style="background:var(--purple-50);padding:16px;border-radius:var(--radius-sm);margin-bottom:20px;text-align:center">
+                <strong>Scan to Pay: ${formatCurrency(1000)}</strong><br>
+                <span style="font-size:0.85rem;color:var(--gray-500)">Monthly Contribution</span>
+                <div style="margin:20px auto; width: 170px; height: 170px; background: white; padding: 10px; border-radius: 8px;">
+                    <img src="/static/QRCode.png" alt="QR Code" style="width: 150px; height: 150px; border-radius: 4px;">
+                </div>
+                <p style="font-size:0.9rem; margin-top: 10px;">Scan using any UPI App</p>
+            </div>
+            <form id="contribForm">
+                <div class="form-group-content"><label>Or enter Transaction ID manually (if testing)</label><input class="form-input" id="contribTxn" placeholder="Enter transaction ID" value="QR_SCANNED_TXN_01" required></div>
+                <div class="form-actions"><button type="submit" class="btn btn-success">Confirm Payment</button></div>
+            </form>
+        </div></div>`;
+        $('contribForm').addEventListener('submit', async e => {
+            e.preventDefault();
+            try {
+                const r = await api.payContribution($('contribTxn').value.trim());
+                showToast(t('contrib.success'),'success');
+                openModal(t('contrib.success_title'), `
+                    <div class="info-grid">
+                        <div class="info-item"><div class="info-label">${t('common.amount')}</div><div class="info-value">${formatCurrency(r.contribution_amount)}</div></div>
+                        <div class="info-item"><div class="info-label">${t('common.penalty')}</div><div class="info-value">${formatCurrency(r.penalty_amount)}</div></div>
+                        <div class="info-item"><div class="info-label">${t('common.total_paid')}</div><div class="info-value">${formatCurrency(r.total_paid)}</div></div>
+                        <div class="info-item"><div class="info-label">${t('common.date')}</div><div class="info-value">${formatDate(r.payment_date)}</div></div>
+                    </div>`);
+                $('contribForm').reset();
+            } catch(err) { showToast(err.message,'error'); }
+        });
+    }
+}
+
+async function loadRecentContributions() {
+    try {
+        const data = await api.paymentsByMonth(new Date().toISOString().slice(0, 7));
+        const contribs = data.payments.filter(p => p.payment_type === 'monthly_contribution');
+        
+        if (contribs.length === 0) {
+            $('contribList').innerHTML = '<div class="empty-state"><h3>No contributions found</h3></div>';
+            return;
+        }
+        
+        $('contribList').innerHTML = `
+        <div class="table-wrapper">
+            <table class="data-table">
+                <thead><tr>
+                    <th>Date</th>
+                    <th>Member</th>
+                    <th>Phone</th>
+                    <th>Amount</th>
+                    <th>Transaction ID</th>
+                    <th>Action</th>
+                </tr></thead>
+                <tbody>
+                ${contribs.map(c => `
+                    <tr>
+                        <td>${formatDate(c.payment_date)}</td>
+                        <td>${c.member_name}</td>
+                        <td>${c.member_phone}</td>
+                        <td class="cell-primary">${formatCurrency(c.amount)}</td>
+                        <td class="cell-mono">${c.transaction_id || '—'}</td>
+                        <td><button class="btn btn-danger btn-sm" onclick="deleteContribution(${c.id}, '${c.member_name}')">Delete</button></td>
+                    </tr>
+                `).join('')}
+                </tbody>
+            </table>
+        </div>`;
+    } catch(err) {
+        $('contribList').innerHTML = `<div class="empty-state"><h3>Error loading contributions</h3><p>${err.message}</p></div>`;
+    }
+}
+
+async function deleteContribution(paymentId, memberName) {
+    if (!confirm(`Are you sure you want to delete the contribution payment #${paymentId} for ${memberName}?`)) return;
+    try {
+        await api.deleteContribution(paymentId);
+        showToast('Contribution deleted successfully', 'success');
+        loadRecentContributions();
+    } catch(err) {
+        showToast(err.message, 'error');
+    }
 }
 
 // ---- Shared Render Helpers ----
