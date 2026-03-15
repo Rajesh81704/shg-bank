@@ -176,6 +176,12 @@ const api = {
     },
     paymentsByMonth: monthYear => apiFetch(`/payments-by-month/${monthYear}`),
     deleteMember: userId => apiFetch(`/delete-member/${userId}`, {method:'DELETE'}),
+    adminPayContribution: (phone, monthYear, txnId) => {
+        const params = new URLSearchParams({ month_year: monthYear });
+        if (txnId) params.append('transaction_id', txnId);
+        return apiFetch(`/pay-contribution/${encodeURIComponent(phone)}?${params.toString()}`, {method:'POST'});
+    },
+    deleteContribution: id => apiFetch(`/delete-contribution/${id}`, {method:'DELETE'}),
 };
 
 // ---- Navigation Config (use i18n keys for labels) ----
@@ -1208,9 +1214,10 @@ async function renderMonthlyPayments() {
     const currentMonthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     
     c.innerHTML = `
-    <div class="card form-card" style="max-width:600px">
+    <div class="card form-card" style="max-width:700px">
         <div class="card-header">
             <h3 class="card-title">📅 Select Month</h3>
+            <button class="btn btn-success btn-sm" onclick="showPayContributionAdminModal()">+ Record Contribution</button>
         </div>
         <div class="card-body">
             <form id="monthSelectForm" style="display:flex;gap:12px;align-items:flex-end;">
@@ -1287,6 +1294,7 @@ async function loadMonthlyPayments(monthYear) {
                                 <th>Penalty</th>
                                 <th>Days Late</th>
                                 <th>Transaction ID</th>
+                                <th>Action</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1301,6 +1309,9 @@ async function loadMonthlyPayments(monthYear) {
                             <td>${p.penalty_amount > 0 ? formatCurrency(p.penalty_amount) : '—'}</td>
                             <td>${p.days_late > 0 ? p.days_late + ' days' : '—'}</td>
                             <td class="cell-mono" style="font-size:0.85rem;">${p.transaction_id || '—'}</td>
+                            <td>${p.payment_type === 'monthly_contribution' 
+                                ? `<button class="btn btn-danger btn-sm" onclick="handleDeleteContribution(${p.id},'${monthYear}')">Delete</button>` 
+                                : '—'}</td>
                         </tr>`).join('')}
                         </tbody>
                         <tfoot>
@@ -1389,6 +1400,56 @@ function exportPaymentsToCSV(monthYear) {
     }).catch(err => {
         showToast('Export failed: ' + err.message, 'error');
     });
+}
+
+function showPayContributionAdminModal() {
+    const now = new Date();
+    const currentMonthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    openModal('Record Monthly Contribution', `
+        <form id="adminPayContribForm">
+            <div class="form-group-content">
+                <label>Member Phone or Name</label>
+                <input class="form-input" id="apcPhone" placeholder="Enter phone number or name" required>
+            </div>
+            <div class="form-group-content">
+                <label>Month (YYYY-MM)</label>
+                <input class="form-input" type="month" id="apcMonth" value="${currentMonthYear}" required>
+            </div>
+            <div class="form-group-content">
+                <label>Transaction ID (optional)</label>
+                <input class="form-input" id="apcTxnId" placeholder="Auto-generated if left blank">
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-success btn-full">Record Contribution</button>
+            </div>
+        </form>`);
+    $('adminPayContribForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const phone = $('apcPhone').value.trim();
+        const monthYear = $('apcMonth').value;
+        const txnId = $('apcTxnId').value.trim() || null;
+        try {
+            const result = await api.adminPayContribution(phone, monthYear, txnId);
+            closeModal();
+            showToast(`Contribution recorded for ${result.member_name} — ₹${result.total_paid}`, 'success');
+            // Refresh monthly payments if visible
+            const monthInput = $('monthYearInput');
+            if (monthInput) loadMonthlyPayments(monthInput.value);
+        } catch(err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+async function handleDeleteContribution(paymentId, monthYear) {
+    if (!confirm('Delete this contribution payment? This cannot be undone.')) return;
+    try {
+        await api.deleteContribution(paymentId);
+        showToast('Contribution deleted successfully', 'success');
+        loadMonthlyPayments(monthYear);
+    } catch(err) {
+        showToast(err.message, 'error');
+    }
 }
 
 function showCreateUserModal() {

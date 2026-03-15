@@ -23,6 +23,8 @@ from app.api.services.admin_service import (
     get_payments_by_month,
     update_user_details,
     delete_member,
+    admin_pay_contribution,
+    delete_contribution as delete_contribution_service,
 )
 from app.api.services.loan_service import approve_loan_application, get_all_loans
 from app.api.middleware.auth_middleware import get_admin_user
@@ -281,6 +283,43 @@ async def delete_member_endpoint(
     """Delete a member and all their loans and payments (admin only)"""
     try:
         result = delete_member(db, user_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.post("/pay-contribution/{phone}")
+async def pay_contribution_for_member(
+    phone: str,
+    month_year: str,
+    transaction_id: str = None,
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """
+    Record monthly contribution payment on behalf of a member (admin only)
+    - phone: member phone or name
+    - month_year: month to record contribution for, format YYYY-MM (e.g. 2026-03)
+    - transaction_id: optional custom transaction ID (auto-generated if not provided)
+    """
+    try:
+        result = admin_pay_contribution(db, phone, month_year, transaction_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+
+
+@router.delete("/delete-contribution/{payment_id}")
+async def delete_contribution(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """Delete a monthly contribution payment by its ID (admin only)"""
+    try:
+        result = delete_contribution_service(db, payment_id)
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e

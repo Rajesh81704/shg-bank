@@ -921,3 +921,110 @@ def delete_member(db: Session, user_id: int):
     db.commit()
 
     return {"message": f"Member '{user[1]}' ({user[2]}) and all associated data deleted successfully"}
+
+
+def admin_pay_contribution(db: Session, phone: str, month_year: str, transaction_id: str = None):
+    """Record monthly contribution payment on behalf of a member (admin only)"""
+    import uuid
+    from app.api.config import MONTHLY_CONTRIBUTION, PENALTY_PER_DAY
+
+    # Resolve member by phone or name
+    member = db.execute(
+        text("""
+            SELECT id, name, phone FROM users
+            WHERE phone = :exact_phone OR phone ILIKE :search OR name ILIKE :search
+            LIMIT 1
+        """),
+        {"exact_phone": phone, "search": f"%{phone}%"}
+    ).fetchone()
+    if not member:
+        raise ValueError("Member not found")
+
+    member_id, member_name, member_phone = member
+
+    # Parse month_year -> due date is 10th of that month
+    try:
+        year, month = month_year.split('-')
+        due_date = date(int(year), int(month), 10)
+    except (ValueError, AttributeError):
+        raise ValueError("Invalid month_year format. Use YYYY-MM (e.g. 2026-03)")
+
+    # Check if already paid for this month
+    existing = db.execute(
+        text("""
+            SELECT id FROM payments
+            WHERE member_id = :member_id
+            AND payment_type = 'monthly_contribution'
+            AND due_date = :due_date
+            AND payment_date IS NOT NULL
+        """),
+        {"member_id": member_id, "due_date": due_date}
+    ).fetchone()
+    if existing:
+        raise ValueError(f"Monthly contribution for {due_date.strftime('%B %Y')} already paid")
+
+    # Penalty based on today vs due date
+    pay_date = date.today()
+    days_late = max(0, (pay_date - due_date).days) if pay_date > due_date else 0
+    penalty_amount = days_late * PENALTY_PER_DAY
+
+    txn_id = transaction_id or f"ADMIN-MC-{member_id}-{due_date.strftime('%Y%m')}-{uuid.uuid4().hex[:8]}"
+
+    db.execute(
+        text("""
+            INSERT INTO payments
+            (member_id, payment_type, total_loan_amount, description, payment_date,
+             due_date, transaction_id, days_late, penalty_amount, total_pending_amount)
+            VALUES
+            (:member_id, 'monthly_contribution', :amount, :description, :payment_date,
+             :due_date, :transaction_id, :days_late, :penalty_amount, 0)
+        """),
+        {
+            "member_id": member_id,
+            "amount": MONTHLY_CONTRIBUTION,
+            "description": f"Monthly contribution for {due_date.strftime('%B %Y')} (admin recorded)",
+            "payment_date": pay_date,
+            "due_date": due_date,
+            "transaction_id": txn_id,
+            "days_late": days_late,
+            "penalty_amount": penalty_amount,
+        }
+    )
+    db.commit()
+
+    return {
+        "message": "Contribution recorded successfully",
+        "member_name": member_name,
+        "member_phone": member_phone,
+        "month_year": month_year,
+        "contribution_amount": MONTHLY_CONTRIBUTION,
+        "penalty_amount": penalty_amount,
+        "days_late": days_late,
+        "total_paid": MONTHLY_CONTRIBUTION + penalty_amount,
+        "payment_date": pay_date.strftime("%Y-%m-%d"),
+        "due_date": due_date.strftime("%Y-%m-%d"),
+        "transaction_id": txn_id,
+    }
+
+
+def delete_contribution(db: Session, payment_id: int):
+    """Delete a monthly contribution payment by ID (admin only)"""
+    result = db.execute(
+        text("SELECT id, member_id, payment_type, due_date FROM payments WHERE id = :id"),
+        {"id": payment_id}
+    ).fetchone()
+
+    if not result:
+        raise ValueError("Payment not found")
+    if result[2] != "monthly_contribution":
+        raise ValueError("This payment is not a monthly contribution")
+
+    db.execute(text("DELETE FROM payments WHERE id = :id"), {"id": payment_id})
+    db.commit()
+
+    return {
+        "message": "Contribution deleted successfully",
+        "payment_id": payment_id,
+        "member_id": result[1],
+        "due_date": result[3].strftime("%Y-%m-%d") if result[3] else None,
+    }
