@@ -176,10 +176,17 @@ const api = {
     },
     paymentsByMonth: monthYear => apiFetch(`/payments-by-month/${monthYear}`),
     deleteMember: userId => apiFetch(`/delete-member/${userId}`, {method:'DELETE'}),
-    adminPayContribution: (phone, monthYear, txnId) => {
-        const params = new URLSearchParams({ month_year: monthYear });
+    adminPayContribution: (phone, monthYear, txnId, applyPenalty) => {
+        const params = new URLSearchParams({ month_year: monthYear, apply_penalty: applyPenalty });
         if (txnId) params.append('transaction_id', txnId);
         return apiFetch(`/pay-contribution/${encodeURIComponent(phone)}?${params.toString()}`, {method:'POST'});
+    },
+    deleteContribution: id => apiFetch(`/delete-contribution/${id}`, {method:'DELETE'}),
+    pendingInstallments: phone => apiFetch(`/pending-installments/${encodeURIComponent(phone)}`),
+    adminPayInstallment: (id, txnId, applyPenalty) => {
+        const params = new URLSearchParams({ apply_penalty: applyPenalty });
+        if (txnId) params.append('transaction_id', txnId);
+        return apiFetch(`/pay-installment/${id}?${params.toString()}`, {method:'POST'});
     },
     deleteContribution: id => apiFetch(`/delete-contribution/${id}`, {method:'DELETE'}),
 };
@@ -190,7 +197,6 @@ const adminNav = [
     { id:'members', labelKey:'nav.members', icon:'members' },
     { id:'loans', labelKey:'nav.all_loans', icon:'loans' },
     { id:'createLoan', labelKey:'nav.create_loan', icon:'apply' },
-    { id:'payContribution', labelKey:'nav.pay_contribution', icon:'contribution' },
     { id:'monthlyPayments', labelKey:'nav.monthly_payments', icon:'payments' },
     { id:'financialSummary', labelKey:'nav.financial_summary', icon:'summary' },
     { id:'calculator', labelKey:'nav.emi_calculator', icon:'calculator' },
@@ -1209,37 +1215,91 @@ async function previewLoan() {
 
 async function renderMonthlyPayments() {
     const c = $('contentArea');
-    
-    // Get current month-year as default
     const now = new Date();
     const currentMonthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    
+
     c.innerHTML = `
-    <div class="card form-card" style="max-width:700px">
-        <div class="card-header">
-            <h3 class="card-title">📅 Select Month</h3>
-            <button class="btn btn-success btn-sm" onclick="showPayContributionAdminModal()">+ Record Contribution</button>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+
+        <div class="card" style="flex:1;min-width:260px;">
+            <div class="card-header"><h3 class="card-title">📅 View by Month</h3></div>
+            <div class="card-body">
+                <form id="monthSelectForm" style="display:flex;gap:8px;align-items:flex-end;">
+                    <div class="form-group-content" style="flex:1;margin-bottom:0;">
+                        <label>Month-Year</label>
+                        <input class="form-input" type="month" id="monthYearInput" value="${currentMonthYear}" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm" style="height:38px;">View</button>
+                </form>
+            </div>
         </div>
-        <div class="card-body">
-            <form id="monthSelectForm" style="display:flex;gap:12px;align-items:flex-end;">
-                <div class="form-group-content" style="flex:1;margin-bottom:0;">
-                    <label>Month-Year (YYYY-MM)</label>
-                    <input class="form-input" type="month" id="monthYearInput" value="${currentMonthYear}" required>
-                    <small style="color:var(--gray-500);font-size:0.85rem;">Select month to view all payments</small>
+
+        <div class="card" style="flex:1;min-width:260px;">
+            <div class="card-header"><h3 class="card-title">💰 Record Contribution</h3></div>
+            <div class="card-body">
+                <form id="adminPayContribForm">
+                    <div class="form-group-content">
+                        <label>Member Phone or Name</label>
+                        <input class="form-input" id="apcPhone" placeholder="Phone or name" required>
+                    </div>
+                    <div class="form-group-content">
+                        <label>Month</label>
+                        <input class="form-input" type="month" id="apcMonth" value="${currentMonthYear}" required>
+                    </div>
+                    <div class="form-group-content">
+                        <label>Transaction ID (optional)</label>
+                        <input class="form-input" id="apcTxnId" placeholder="Auto-generated if blank">
+                    </div>
+                    <div class="form-group-content" style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--amber-50);border-radius:var(--radius-sm);border:1px solid var(--amber-200)">
+                        <input type="checkbox" id="apcApplyPenalty" checked style="width:16px;height:16px;cursor:pointer;">
+                        <label for="apcApplyPenalty" style="margin:0;cursor:pointer;font-size:0.9rem;">Apply late penalty <small style="color:var(--gray-500)">(&#8377;10/day)</small></label>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-success btn-full">Record Contribution</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card" style="flex:1;min-width:260px;">
+            <div class="card-header"><h3 class="card-title">📋 Pay Installment</h3></div>
+            <div class="card-body">
+                <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:12px;">
+                    <div class="form-group-content" style="flex:1;margin-bottom:0;">
+                        <label>Member Phone or Name</label>
+                        <input class="form-input" id="apiSearchPhone" placeholder="Phone or name">
+                    </div>
+                    <button class="btn btn-secondary btn-sm" style="height:38px;" onclick="loadPendingInstallments()">Search</button>
                 </div>
-                <button type="submit" class="btn btn-primary" style="height:38px;">View Payments</button>
-            </form>
+                <div id="pendingInstallmentsList"></div>
+            </div>
         </div>
+
     </div>
-    <div id="monthlyPaymentsResult"></div>`;
-    
-    // Auto-load current month
+    <div id="monthlyPaymentsResult" style="margin-top:16px;"></div>`;
+
     loadMonthlyPayments(currentMonthYear);
-    
+
     $('monthSelectForm').addEventListener('submit', async e => {
         e.preventDefault();
-        const monthYear = $('monthYearInput').value;
-        loadMonthlyPayments(monthYear);
+        loadMonthlyPayments($('monthYearInput').value);
+    });
+
+    $('adminPayContribForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const phone = $('apcPhone').value.trim();
+        const monthYear = $('apcMonth').value;
+        const txnId = $('apcTxnId').value.trim() || null;
+        const applyPenalty = $('apcApplyPenalty').checked;
+        try {
+            const result = await api.adminPayContribution(phone, monthYear, txnId, applyPenalty);
+            showToast(`Contribution recorded for ${result.member_name} — ₹${result.total_paid}`, 'success');
+            $('adminPayContribForm').reset();
+            $('apcMonth').value = $('monthYearInput').value;
+            loadMonthlyPayments($('monthYearInput').value);
+        } catch(err) {
+            showToast(err.message, 'error');
+        }
     });
 }
 
@@ -1403,44 +1463,7 @@ function exportPaymentsToCSV(monthYear) {
     });
 }
 
-function showPayContributionAdminModal() {
-    const now = new Date();
-    const currentMonthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    openModal('Record Monthly Contribution', `
-        <form id="adminPayContribForm">
-            <div class="form-group-content">
-                <label>Member Phone or Name</label>
-                <input class="form-input" id="apcPhone" placeholder="Enter phone number or name" required>
-            </div>
-            <div class="form-group-content">
-                <label>Month (YYYY-MM)</label>
-                <input class="form-input" type="month" id="apcMonth" value="${currentMonthYear}" required>
-            </div>
-            <div class="form-group-content">
-                <label>Transaction ID (optional)</label>
-                <input class="form-input" id="apcTxnId" placeholder="Auto-generated if left blank">
-            </div>
-            <div class="form-actions">
-                <button type="submit" class="btn btn-success btn-full">Record Contribution</button>
-            </div>
-        </form>`);
-    $('adminPayContribForm').addEventListener('submit', async e => {
-        e.preventDefault();
-        const phone = $('apcPhone').value.trim();
-        const monthYear = $('apcMonth').value;
-        const txnId = $('apcTxnId').value.trim() || null;
-        try {
-            const result = await api.adminPayContribution(phone, monthYear, txnId);
-            closeModal();
-            showToast(`Contribution recorded for ${result.member_name} — ₹${result.total_paid}`, 'success');
-            // Refresh monthly payments if visible
-            const monthInput = $('monthYearInput');
-            if (monthInput) loadMonthlyPayments(monthInput.value);
-        } catch(err) {
-            showToast(err.message, 'error');
-        }
-    });
-}
+function showPayContributionAdminModal() {} // kept for compatibility, form is now inline
 
 async function handleDeleteContribution(paymentId, monthYear) {
     if (!confirm('Delete this contribution payment? This cannot be undone.')) return;
@@ -1451,6 +1474,69 @@ async function handleDeleteContribution(paymentId, monthYear) {
     } catch(err) {
         showToast(err.message, 'error');
     }
+}
+
+async function loadPendingInstallments() {
+    const phone = $('apiSearchPhone').value.trim();
+    if (!phone) { showToast('Enter phone or name', 'warning'); return; }
+    const div = $('pendingInstallmentsList');
+    div.innerHTML = '<div class="skeleton" style="height:60px;border-radius:8px;"></div>';
+    try {
+        const data = await api.pendingInstallments(phone);
+        if (!data.pending_installments.length) {
+            div.innerHTML = `<p style="color:var(--green-600);font-size:0.9rem;">✓ No pending installments for ${data.member_name}</p>`;
+            return;
+        }
+        div.innerHTML = `
+        <p style="font-size:0.85rem;color:var(--gray-600);margin-bottom:8px;"><b>${data.member_name}</b> (${data.member_phone}) — ${data.pending_installments.length} pending</p>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+        ${data.pending_installments.map(i => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--gray-50);border-radius:var(--radius-sm);border:1px solid var(--gray-200);">
+                <div>
+                    <div style="font-size:0.85rem;font-weight:600;">${i.description}</div>
+                    <div style="font-size:0.8rem;color:var(--gray-500);">Due: ${formatDate(i.due_date)} · ${formatCurrency(i.amount)}</div>
+                </div>
+                <button class="btn btn-success btn-sm" onclick="handleAdminPayInstallment(${i.id}, '${data.member_name}', ${i.amount})">Pay</button>
+            </div>`).join('')}
+        </div>`;
+    } catch(err) {
+        div.innerHTML = `<p style="color:var(--red-500);font-size:0.85rem;">${err.message}</p>`;
+    }
+}
+
+function handleAdminPayInstallment(installmentId, memberName, amount) {
+    openModal(`Pay Installment — ${memberName}`, `
+        <div style="background:var(--purple-50);padding:12px;border-radius:var(--radius-sm);margin-bottom:16px;">
+            <strong>Amount: ${formatCurrency(amount)}</strong>
+        </div>
+        <form id="adminPayInstForm">
+            <div class="form-group-content">
+                <label>Transaction ID (optional)</label>
+                <input class="form-input" id="apiTxnId" placeholder="Auto-generated if blank">
+            </div>
+            <div class="form-group-content" style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--amber-50);border-radius:var(--radius-sm);border:1px solid var(--amber-200)">
+                <input type="checkbox" id="apiApplyPenalty" checked style="width:16px;height:16px;cursor:pointer;">
+                <label for="apiApplyPenalty" style="margin:0;cursor:pointer;font-size:0.9rem;">Apply late penalty <small style="color:var(--gray-500)">(&#8377;10/day)</small></label>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-success btn-full">Confirm Payment</button>
+            </div>
+        </form>`);
+    $('adminPayInstForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const txnId = $('apiTxnId').value.trim() || null;
+        const applyPenalty = $('apiApplyPenalty').checked;
+        try {
+            const result = await api.adminPayInstallment(installmentId, txnId, applyPenalty);
+            closeModal();
+            showToast(`Installment paid — ₹${result.total_paid}`, 'success');
+            loadPendingInstallments();
+            const monthInput = $('monthYearInput');
+            if (monthInput) loadMonthlyPayments(monthInput.value);
+        } catch(err) {
+            showToast(err.message, 'error');
+        }
+    });
 }
 
 function showCreateUserModal() {
@@ -1714,14 +1800,6 @@ async function renderMyEarnings() {
                 <span>Grand Total (All Kisht+A+B)</span> <strong>${formatCurrency(grandTotal)}</strong>
             </button>
         </div>
-        <div class="card section-gap"><div class="card-header"><h3 class="card-title">${t('earnings.group_totals')}</h3></div><div class="card-body">
-            <div class="info-grid">
-                <div class="info-item"><div class="info-label">${t('earnings.total_interest')}</div><div class="info-value">${formatCurrency(g.total_interest_earned)}</div></div>
-                <div class="info-item"><div class="info-label">${t('earnings.total_penalties_collected')}</div><div class="info-value">${formatCurrency(g.total_penalties_collected)}</div></div>
-                <div class="info-item"><div class="info-label">${t('earnings.grand_total')}</div><div class="info-value">${formatCurrency(g.grand_total)}</div></div>
-                <div class="info-item"><div class="info-label">${t('earnings.active_members')}</div><div class="info-value">${data.total_active_members}</div></div>
-            </div>
-        </div></div>
         <div class="card"><div class="card-header"><h3 class="card-title">${t('earnings.my_contribution')}</h3></div><div class="card-body">
             <div class="info-grid">
                 <div class="info-item"><div class="info-label">${t('earnings.penalty_paid')}</div><div class="info-value">${formatCurrency(m.penalty_paid_by_me)}</div></div>

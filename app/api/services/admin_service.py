@@ -928,3 +928,228 @@ def delete_member(db: Session, user_id: int):
     db.commit()
 
     return {"message": f"Member '{user[1]}' ({user[2]}) and all associated data deleted successfully"}
+
+
+def admin_pay_contribution(db: Session, phone: str, month_year: str, transaction_id: str = None, apply_penalty: bool = True):
+    """Record monthly contribution payment on behalf of a member (admin only)"""
+    import uuid
+    from app.api.config import MONTHLY_CONTRIBUTION, PENALTY_PER_DAY
+
+    member = db.execute(
+        text("""
+            SELECT id, name, phone FROM users
+            WHERE phone = :exact_phone OR phone ILIKE :search OR name ILIKE :search
+            LIMIT 1
+        """),
+        {"exact_phone": phone, "search": f"%{phone}%"}
+    ).fetchone()
+    if not member:
+        raise ValueError("Member not found")
+
+    member_id, member_name, member_phone = member
+
+    try:
+        year, month = month_year.split('-')
+        due_date = date(int(year), int(month), 10)
+    except (ValueError, AttributeError):
+        raise ValueError("Invalid month_year format. Use YYYY-MM (e.g. 2026-03)")
+
+    existing = db.execute(
+        text("""
+            SELECT id FROM payments
+            WHERE member_id = :member_id
+            AND payment_type = 'monthly_contribution'
+            AND due_date = :due_date
+            AND payment_date IS NOT NULL
+        """),
+        {"member_id": member_id, "due_date": due_date}
+    ).fetchone()
+    if existing:
+        raise ValueError(f"Monthly contribution for {due_date.strftime('%B %Y')} already paid")
+
+    today = date.today()
+    pay_date = today if due_date >= today else due_date
+    if apply_penalty:
+        days_late = max(0, (today - due_date).days) if today > due_date else 0
+    else:
+        days_late = 0
+    penalty_amount = days_late * PENALTY_PER_DAY
+
+    txn_id = transaction_id or f"ADMIN-MC-{member_id}-{due_date.strftime('%Y%m')}-{uuid.uuid4().hex[:8]}"
+
+    from sqlalchemy.exc import IntegrityError
+    try:
+        db.execute(
+            text("""
+                INSERT INTO payments
+                (member_id, payment_type, total_loan_amount, description, payment_date,
+                 due_date, transaction_id, days_late, penalty_amount, total_pending_amount)
+                VALUES
+                (:member_id, 'monthly_contribution', :amount, :description, :payment_date,
+                 :due_date, :transaction_id, :days_late, :penalty_amount, 0)
+            """),
+            {
+                "member_id": member_id,
+                "amount": MONTHLY_CONTRIBUTION,
+                "description": f"Monthly contribution for {due_date.strftime('%B %Y')} (admin recorded)",
+                "payment_date": pay_date,
+                "due_date": due_date,
+                "transaction_id": txn_id,
+                "days_late": days_late,
+                "penalty_amount": penalty_amount,
+            }
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise ValueError(f"Transaction ID '{txn_id}' already exists. Use a different one.")
+
+    return {
+        "message": "Contribution recorded successfully",
+        "member_name": member_name,
+        "member_phone": member_phone,
+        "month_year": month_year,
+        "contribution_amount": MONTHLY_CONTRIBUTION,
+        "penalty_amount": penalty_amount,
+        "days_late": days_late,
+        "total_paid": MONTHLY_CONTRIBUTION + penalty_amount,
+        "payment_date": pay_date.strftime("%Y-%m-%d"),
+        "due_date": due_date.strftime("%Y-%m-%d"),
+        "transaction_id": txn_id,
+    }
+
+
+def delete_contribution(db: Session, payment_id: int):
+    """Delete a monthly contribution payment by ID (admin only)"""
+    result = db.execute(
+        text("SELECT id, member_id, payment_type, due_date FROM payments WHERE id = :id"),
+        {"id": payment_id}
+    ).fetchone()
+
+    if not result:
+        raise ValueError("Payment not found")
+    if result[2] != "monthly_contribution":
+        raise ValueError("This payment is not a monthly contribution")
+
+    db.execute(text("DELETE FROM payments WHERE id = :id"), {"id": payment_id})
+    db.commit()
+
+    return {
+        "message": "Contribution deleted successfully",
+        "payment_id": payment_id,
+        "member_id": result[1],
+        "due_date": result[3].strftime("%Y-%m-%d") if result[3] else None,
+    }
+
+
+def admin_get_pending_installments(db: Session, phone: str):
+    """Get all pending loan installments for a member by phone or name (admin only)"""
+    member = db.execute(
+        text("""
+            SELECT id, name, phone FROM users
+            WHERE phone = :exact_phone OR phone ILIKE :search OR name ILIKE :search
+            LIMIT 1
+        """),
+        {"exact_phone": phone, "search": f"%{phone}%"}
+    ).fetchone()
+    if not member:
+        raise ValueError("Member not found")
+
+    rows = db.execute(
+        text("""
+            SELECT p.id, p.description, p.total_pending_amount, p.due_date, l.id as loan_id
+            FROM payments p
+            JOIN loans l ON l.member_id = p.member_id
+                AND p.description LIKE CONCAT('Loan #', l.id::text, ' -%')
+            WHERE p.member_id = :member_id
+            AND p.payment_type = 'loan_installment'
+            AND p.payment_date IS NULL
+            ORDER BY p.due_date ASC
+        """),
+        {"member_id": member[0]}
+    ).fetchall()
+
+    return {
+        "member_id": member[0],
+        "member_name": member[1],
+        "member_phone": member[2],
+        "pending_installments": [
+            {
+                "id": r[0],
+                "description": r[1],
+                "amount": float(r[2]) if r[2] else 0,
+                "due_date": r[3].strftime("%Y-%m-%d") if r[3] else None,
+                "loan_id": r[4],
+            }
+            for r in rows
+        ]
+    }
+
+
+def admin_pay_installment(db: Session, installment_id: int, transaction_id: str = None, apply_penalty: bool = True):
+    """Pay a loan installment on behalf of a member (admin only)"""
+    import uuid
+    from app.api.config import PENALTY_PER_DAY
+
+    row = db.execute(
+        text("""
+            SELECT id, member_id, total_pending_amount, due_date, payment_date, payment_type
+            FROM payments WHERE id = :id
+        """),
+        {"id": installment_id}
+    ).fetchone()
+
+    if not row:
+        raise ValueError("Installment not found")
+    if row[4] is not None:
+        raise ValueError("Installment already paid")
+    if row[5] != "loan_installment":
+        raise ValueError("This is not a loan installment")
+
+    today = date.today()
+    due_date = row[3]
+
+    if apply_penalty and today > due_date:
+        days_late = (today - due_date).days
+        penalty_amount = days_late * PENALTY_PER_DAY
+    else:
+        days_late = 0
+        penalty_amount = 0.0
+
+    txn_id = transaction_id or f"ADMIN-EMI-{installment_id}-{uuid.uuid4().hex[:8]}"
+
+    from sqlalchemy.exc import IntegrityError
+    try:
+        db.execute(
+            text("""
+                UPDATE payments
+                SET payment_date = :payment_date,
+                    days_late = :days_late,
+                    penalty_amount = :penalty_amount,
+                    total_pending_amount = 0,
+                    transaction_id = :transaction_id
+                WHERE id = :id
+            """),
+            {
+                "payment_date": today,
+                "days_late": days_late,
+                "penalty_amount": penalty_amount,
+                "transaction_id": txn_id,
+                "id": installment_id,
+            }
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise ValueError(f"Transaction ID '{txn_id}' already exists. Use a different one.")
+
+    return {
+        "message": "Installment paid successfully",
+        "installment_id": installment_id,
+        "amount_paid": float(row[2]) if row[2] else 0,
+        "penalty_amount": penalty_amount,
+        "days_late": days_late,
+        "total_paid": (float(row[2]) if row[2] else 0) + penalty_amount,
+        "payment_date": today.strftime("%Y-%m-%d"),
+        "transaction_id": txn_id,
+    }
