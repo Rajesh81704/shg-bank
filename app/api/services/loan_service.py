@@ -195,10 +195,8 @@ def calculate_loan(amount: float, interest_rate: float, installments: int, start
     else:
         loan_start = datetime.now().date()
 
-    if loan_start.day <= 10:
-        first_due_date = loan_start.replace(day=10)
-    else:
-        first_due_date = (loan_start + relativedelta(months=1)).replace(day=10)
+    # Always start from next month's 10th
+    first_due_date = (loan_start + relativedelta(months=1)).replace(day=10)
 
     monthly_interest_rate = interest_rate / 100
     principal_per_month = amount / installments
@@ -243,25 +241,29 @@ def calculate_loan(amount: float, interest_rate: float, installments: int, start
 
 
 def process_monthly_contribution(db: Session, member_id: int, payment_transaction_id: str):
-    """Process monthly contribution payment of ₹1000"""
+    """Process monthly contribution payment of ₹1000 — saved as pending_approval"""
     today = date.today()
     current_month = today.replace(day=1)
     due_date = current_month.replace(day=10)
 
+    # Check if already paid or pending approval for this month
     result = db.execute(
         text("""
-            SELECT id FROM payments
+            SELECT id, approval_status FROM payments
             WHERE member_id = :member_id
             AND payment_type = 'monthly_contribution'
             AND due_date = :due_date
-            AND payment_date IS NOT NULL
         """),
         {"member_id": member_id, "due_date": due_date}
     )
     existing_payment = result.fetchone()
 
     if existing_payment:
-        raise ValueError(f"Monthly contribution for {due_date.strftime('%B %Y')} already paid")
+        status = existing_payment[1]
+        if status == 'approved':
+            raise ValueError(f"Monthly contribution for {due_date.strftime('%B %Y')} already paid")
+        if status == 'pending_approval':
+            raise ValueError(f"Monthly contribution for {due_date.strftime('%B %Y')} is already submitted and awaiting admin approval")
 
     days_late = 0
     penalty_amount = 0.0
@@ -279,44 +281,43 @@ def process_monthly_contribution(db: Session, member_id: int, payment_transactio
         text("""
             INSERT INTO payments
             (member_id, payment_type, total_loan_amount, description, payment_date,
-             due_date, transaction_id, days_late, penalty_amount, total_pending_amount)
+             due_date, transaction_id, days_late, penalty_amount, total_pending_amount, approval_status)
             VALUES
-            (:member_id, :payment_type, :total_loan_amount, :description, :payment_date,
-             :due_date, :transaction_id, :days_late, :penalty_amount, :total_pending_amount)
+            (:member_id, :payment_type, :total_loan_amount, :description, NULL,
+             :due_date, :transaction_id, :days_late, :penalty_amount, :total_pending_amount, 'pending_approval')
         """),
         {
             "member_id": member_id,
             "payment_type": "monthly_contribution",
             "total_loan_amount": MONTHLY_CONTRIBUTION,
             "description": f"Monthly contribution for {due_date.strftime('%B %Y')}",
-            "payment_date": today,
             "due_date": due_date,
             "transaction_id": transaction_id,
             "days_late": days_late,
             "penalty_amount": penalty_amount,
-            "total_pending_amount": 0
+            "total_pending_amount": total_amount
         }
     )
 
     db.commit()
 
     return {
-        "message": "Monthly contribution paid successfully",
+        "message": "Monthly contribution submitted — awaiting admin approval",
         "contribution_amount": MONTHLY_CONTRIBUTION,
         "penalty_amount": penalty_amount,
         "days_late": days_late,
         "total_paid": total_amount,
-        "payment_date": today.strftime("%Y-%m-%d"),
         "due_date": due_date.strftime("%Y-%m-%d"),
-        "transaction_id": transaction_id
+        "transaction_id": transaction_id,
+        "approval_status": "pending_approval"
     }
 
 
 def pay_loan_installment(db: Session, member_id: int, installment_id: int, payment_transaction_id: str):
-    """Pay a loan installment"""
+    """Submit a loan installment payment — saved as pending_approval"""
     result = db.execute(
         text("""
-            SELECT id, member_id, total_pending_amount, due_date, payment_date, payment_type
+            SELECT id, member_id, total_pending_amount, due_date, payment_date, payment_type, approval_status
             FROM payments
             WHERE id = :installment_id AND member_id = :member_id
         """),
@@ -329,6 +330,9 @@ def pay_loan_installment(db: Session, member_id: int, installment_id: int, payme
 
     if installment[4] is not None:
         raise ValueError("Installment already paid")
+
+    if installment[6] == 'pending_approval':
+        raise ValueError("Installment already submitted and awaiting admin approval")
 
     if installment[5] != "loan_installment":
         raise ValueError("This is not a loan installment")
@@ -345,20 +349,22 @@ def pay_loan_installment(db: Session, member_id: int, installment_id: int, payme
             days_late = (today - due_date).days
             penalty_amount = days_late * PENALTY_PER_DAY
 
+    total_payable = installment[2] + penalty_amount
+
     db.execute(
         text("""
             UPDATE payments
-            SET payment_date = :payment_date,
-                days_late = :days_late,
+            SET days_late = :days_late,
                 penalty_amount = :penalty_amount,
-                total_pending_amount = 0,
-                transaction_id = :transaction_id
+                total_pending_amount = :total_pending_amount,
+                transaction_id = :transaction_id,
+                approval_status = 'pending_approval'
             WHERE id = :installment_id
         """),
         {
-            "payment_date": today,
             "days_late": days_late,
             "penalty_amount": penalty_amount,
+            "total_pending_amount": total_payable,
             "transaction_id": f"EMI-{installment_id}-{payment_transaction_id}",
             "installment_id": installment_id
         }
@@ -367,15 +373,15 @@ def pay_loan_installment(db: Session, member_id: int, installment_id: int, payme
     db.commit()
 
     return {
-        "message": "Loan installment paid successfully",
+        "message": "Loan installment submitted — awaiting admin approval",
         "installment_id": installment_id,
         "amount_paid": installment[2],
         "penalty_amount": penalty_amount,
         "days_late": days_late,
-        "total_paid": installment[2] + penalty_amount,
-        "payment_date": today.strftime("%Y-%m-%d"),
+        "total_paid": total_payable,
         "due_date": due_date.strftime("%Y-%m-%d"),
-        "transaction_id": f"EMI-{installment_id}-{payment_transaction_id}"
+        "transaction_id": f"EMI-{installment_id}-{payment_transaction_id}",
+        "approval_status": "pending_approval"
     }
 
 
@@ -385,7 +391,7 @@ def get_all_installments(db: Session, member_id: int):
         text("""
             SELECT id, member_id, payment_type, total_loan_amount, description,
                    payment_date, due_date, transaction_id, days_late,
-                   penalty_amount, total_pending_amount
+                   penalty_amount, total_pending_amount, approval_status
             FROM payments
             WHERE member_id = :member_id AND payment_type = 'loan_installment'
             ORDER BY due_date ASC
@@ -396,8 +402,19 @@ def get_all_installments(db: Session, member_id: int):
 
     pending = []
     paid = []
+    awaiting = []
 
     for inst in installments:
+        approval_status = inst[11]
+        payment_date = inst[5]
+
+        if approval_status == 'pending_approval':
+            status = "awaiting_approval"
+        elif payment_date:
+            status = "paid"
+        else:
+            status = "pending"
+
         installment_data = {
             "id": inst[0],
             "member_id": inst[1],
@@ -410,11 +427,14 @@ def get_all_installments(db: Session, member_id: int):
             "days_late": inst[8],
             "penalty_amount": inst[9],
             "total_pending_amount": inst[10],
-            "status": "paid" if inst[5] else "pending"
+            "approval_status": approval_status,
+            "status": status
         }
 
-        if inst[5]:
+        if status == "paid":
             paid.append(installment_data)
+        elif status == "awaiting_approval":
+            awaiting.append(installment_data)
         else:
             pending.append(installment_data)
 
@@ -422,7 +442,9 @@ def get_all_installments(db: Session, member_id: int):
         "total_installments": len(installments),
         "pending_count": len(pending),
         "paid_count": len(paid),
+        "awaiting_approval_count": len(awaiting),
         "pending_installments": pending,
+        "awaiting_approval_installments": awaiting,
         "paid_installments": paid
     }
 

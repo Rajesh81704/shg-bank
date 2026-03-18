@@ -25,6 +25,10 @@ from app.api.services.admin_service import (
     delete_member,
     admin_pay_contribution,
     delete_contribution as delete_contribution_service,
+    admin_get_pending_installments,
+    admin_pay_installment as admin_pay_installment_service,
+    approve_payment as approve_payment_service,
+    get_pending_approvals,
 )
 from app.api.services.loan_service import approve_loan_application, get_all_loans
 from app.api.middleware.auth_middleware import get_admin_user
@@ -293,22 +297,16 @@ async def pay_contribution_for_member(
     phone: str,
     month_year: str,
     transaction_id: str = None,
+    apply_penalty: bool = True,
     db: Session = Depends(get_db),
     _current_admin: dict = Depends(get_admin_user)
 ):
-    """
-    Record monthly contribution payment on behalf of a member (admin only)
-    - phone: member phone or name
-    - month_year: month to record contribution for, format YYYY-MM (e.g. 2026-03)
-    - transaction_id: optional custom transaction ID (auto-generated if not provided)
-    """
+    """Record monthly contribution payment on behalf of a member (admin only)"""
     try:
-        result = admin_pay_contribution(db, phone, month_year, transaction_id)
+        result = admin_pay_contribution(db, phone, month_year, transaction_id, apply_penalty)
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-
-
 
 
 @router.delete("/delete-contribution/{payment_id}")
@@ -323,3 +321,53 @@ async def delete_contribution(
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.get("/pending-installments/{phone}")
+async def get_pending_installments(
+    phone: str,
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """Get all pending loan installments for a member by phone or name (admin only)"""
+    try:
+        return admin_get_pending_installments(db, phone)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.post("/pay-installment/{installment_id}")
+async def pay_installment(
+    installment_id: int,
+    transaction_id: str = None,
+    apply_penalty: bool = True,
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """Pay a loan installment on behalf of a member (admin only)"""
+    try:
+        return admin_pay_installment_service(db, installment_id, transaction_id, apply_penalty)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get("/pending-approvals")
+async def get_pending_approvals_endpoint(
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """Get all payments submitted by users awaiting admin approval (admin only)"""
+    return get_pending_approvals(db)
+
+
+@router.post("/approve-payment/{payment_id}")
+async def approve_payment_endpoint(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    _current_admin: dict = Depends(get_admin_user)
+):
+    """Approve a user-submitted payment (admin only)"""
+    try:
+        return approve_payment_service(db, payment_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e

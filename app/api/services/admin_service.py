@@ -753,7 +753,7 @@ def get_payments_by_month(db: Session, month_year: str):
     except (ValueError, AttributeError):
         raise ValueError("Invalid month_year format. Use YYYY-MM (e.g., 2026-03)")
     
-    # Query contributions by due_date month, EMIs by payment_date month
+    # Query contributions by due_date month (including pending_approval), EMIs by payment_date month
     query = text("""
         SELECT 
             p.id,
@@ -768,7 +768,8 @@ def get_payments_by_month(db: Session, month_year: str):
             p.transaction_id,
             p.days_late,
             p.penalty_amount,
-            p.description
+            p.description,
+            p.approval_status
         FROM payments p
         JOIN users u ON p.member_id = u.id
         WHERE (
@@ -795,7 +796,8 @@ def get_payments_by_month(db: Session, month_year: str):
     for row in rows:
         amount = row[5] if row[5] else row[6]  # total_loan_amount or total_pending_amount
         penalty = row[11] if row[11] else 0
-        
+        approval_status = row[13] if len(row) > 13 else 'approved'
+
         payment = {
             "id": row[0],
             "member_id": row[1],
@@ -808,7 +810,8 @@ def get_payments_by_month(db: Session, month_year: str):
             "transaction_id": row[9],
             "days_late": row[10] if row[10] else 0,
             "penalty_amount": float(penalty),
-            "description": row[12]
+            "description": row[12],
+            "approval_status": approval_status
         }
         
         payments.append(payment)
@@ -1153,3 +1156,72 @@ def admin_pay_installment(db: Session, installment_id: int, transaction_id: str 
         "payment_date": today.strftime("%Y-%m-%d"),
         "transaction_id": txn_id,
     }
+
+
+def approve_payment(db: Session, payment_id: int):
+    """Approve a user-submitted payment (admin only)"""
+    row = db.execute(        text("""
+            SELECT id, member_id, payment_type, approval_status, payment_date, due_date, description
+            FROM payments WHERE id = :id
+        """),
+        {"id": payment_id}
+    ).fetchone()
+
+    if not row:
+        raise ValueError("Payment not found")
+    if row[3] != 'pending_approval':
+        raise ValueError("Payment is not pending approval")
+
+    today = date.today()
+    db.execute(
+        text("""
+            UPDATE payments
+            SET payment_date = :payment_date,
+                approval_status = 'approved',
+                total_pending_amount = 0
+            WHERE id = :id
+        """),
+        {"payment_date": today, "id": payment_id}
+    )
+    db.commit()
+
+    return {
+        "message": "Payment approved successfully",
+        "payment_id": payment_id,
+        "member_id": row[1],
+        "payment_type": row[2],
+        "description": row[6],
+        "approved_on": today.strftime("%Y-%m-%d")
+    }
+
+
+def get_pending_approvals(db: Session):
+    """Get all payments awaiting admin approval"""
+    rows = db.execute(
+        text("""
+            SELECT p.id, p.member_id, u.name, u.phone, p.payment_type,
+                   p.total_loan_amount, p.total_pending_amount, p.due_date,
+                   p.transaction_id, p.days_late, p.penalty_amount, p.description
+            FROM payments p
+            JOIN users u ON p.member_id = u.id
+            WHERE p.approval_status = 'pending_approval'
+            ORDER BY p.due_date ASC
+        """)
+    ).fetchall()
+
+    return [
+        {
+            "id": r[0],
+            "member_id": r[1],
+            "member_name": r[2],
+            "member_phone": r[3],
+            "payment_type": r[4],
+            "amount": float(r[5] or r[6] or 0),
+            "due_date": r[7].strftime("%Y-%m-%d") if r[7] else None,
+            "transaction_id": r[8],
+            "days_late": r[9] or 0,
+            "penalty_amount": float(r[10] or 0),
+            "description": r[11],
+        }
+        for r in rows
+    ]

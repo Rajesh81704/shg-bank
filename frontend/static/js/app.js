@@ -177,18 +177,19 @@ const api = {
     paymentsByMonth: monthYear => apiFetch(`/payments-by-month/${monthYear}`),
     deleteMember: userId => apiFetch(`/delete-member/${userId}`, {method:'DELETE'}),
     adminPayContribution: (phone, monthYear, txnId, applyPenalty) => {
-        const params = new URLSearchParams({ month_year: monthYear, apply_penalty: applyPenalty });
+        const params = new URLSearchParams({ month_year: monthYear, apply_penalty: applyPenalty ? 'true' : 'false' });
         if (txnId) params.append('transaction_id', txnId);
         return apiFetch(`/pay-contribution/${encodeURIComponent(phone)}?${params.toString()}`, {method:'POST'});
     },
     deleteContribution: id => apiFetch(`/delete-contribution/${id}`, {method:'DELETE'}),
     pendingInstallments: phone => apiFetch(`/pending-installments/${encodeURIComponent(phone)}`),
     adminPayInstallment: (id, txnId, applyPenalty) => {
-        const params = new URLSearchParams({ apply_penalty: applyPenalty });
+        const params = new URLSearchParams({ apply_penalty: applyPenalty ? 'true' : 'false' });
         if (txnId) params.append('transaction_id', txnId);
         return apiFetch(`/pay-installment/${id}?${params.toString()}`, {method:'POST'});
     },
-    deleteContribution: id => apiFetch(`/delete-contribution/${id}`, {method:'DELETE'}),
+    pendingApprovals: () => apiFetch('/pending-approvals'),
+    approvePayment: id => apiFetch(`/approve-payment/${id}`, {method:'POST'}),
 };
 
 // ---- Navigation Config (use i18n keys for labels) ----
@@ -198,6 +199,7 @@ const adminNav = [
     { id:'loans', labelKey:'nav.all_loans', icon:'loans' },
     { id:'createLoan', labelKey:'nav.create_loan', icon:'apply' },
     { id:'monthlyPayments', labelKey:'nav.monthly_payments', icon:'payments' },
+    { id:'pendingApprovals', labelKey:'pending_approvals', icon:'clock' },
     { id:'financialSummary', labelKey:'nav.financial_summary', icon:'summary' },
     { id:'calculator', labelKey:'nav.emi_calculator', icon:'calculator' },
     { id:'resetPassword', labelKey:'nav.reset_password', icon:'resetPw' },
@@ -308,7 +310,8 @@ function navigate(view, data) {
     const titleKeys = { dashboard:'page.dashboard', members:'page.members', loans:'page.all_loans', resetPassword:'page.reset_password',
         financialSummary:'page.financial_summary', myInstallments:'page.my_installments', applyLoan:'page.apply_loan',
         calculator:'page.emi_calculator', payContribution:'page.pay_contribution', memberDetail:'page.member_details',
-        myEarnings:'page.my_earnings', createLoan:'page.create_loan', monthlyPayments:'page.monthly_payments' };
+        myEarnings:'page.my_earnings', createLoan:'page.create_loan', monthlyPayments:'page.monthly_payments',
+        pendingApprovals:'Payment Installments' };
     $('pageTitle').textContent = t(titleKeys[view] || 'page.dashboard');
         const name = state.user ? (state.user.name || state.user.username) : '';
     const hour = new Date().getHours();
@@ -334,6 +337,7 @@ function navigate(view, data) {
         members: renderMembers, loans: renderLoans, resetPassword: renderResetPassword,
         financialSummary: renderFinancialSummary, createLoan: renderCreateLoan,
         monthlyPayments: renderMonthlyPayments,
+        pendingApprovals: renderPendingApprovals,
         myInstallments: renderMyInstallments, applyLoan: renderApplyLoan,
         calculator: renderCalculator, payContribution: renderPayContribution,
         memberDetail: () => renderMemberDetail(data), myEarnings: renderMyEarnings,
@@ -347,7 +351,7 @@ function navigate(view, data) {
 async function renderAdminDashboard() {
     const c = $('contentArea');
     try {
-        const [summary, loans] = await Promise.all([api.financialSummary(), api.allLoans()]);
+        const [summary, loans, pendingApprovals] = await Promise.all([api.financialSummary(), api.allLoans(), api.pendingApprovals()]);
         const s = summary.summary;
         const st = summary.statistics;
         const pendingLoans = loans.filter(l=>l.status==='pending');
@@ -358,8 +362,29 @@ async function renderAdminDashboard() {
             ${statCard(t('admin.total_collection'), formatCurrency(s.total_collection), `${st.total_contribution_payments + st.total_emi_payments} ${t('common.payments')}`, 'purple', ICONS.wallet)}
             ${statCard(t('admin.loans_disbursed'), formatCurrency(s.total_loans_disbursed), `${st.total_loans_approved} ${t('common.loans_approved')}`, 'green', ICONS.money)}
             ${statCard(t('admin.available_amount'), formatCurrency(s.available_amount), t('admin.net_balance'), 'blue', ICONS.wallet)}
-            ${statCard(t('admin.total_penalties'), formatCurrency(s.total_penalties), `${st.members_with_penalties} ${t('common.members_penalized')}`, 'red', ICONS.alert)}
+            ${pendingApprovals.length > 0 ? statCard('Pending Approvals', pendingApprovals.length, 'Payments awaiting approval', 'amber', ICONS.alert) : statCard(t('admin.total_penalties'), formatCurrency(s.total_penalties), `${st.members_with_penalties} ${t('common.members_penalized')}`, 'red', ICONS.alert)}
         </div>
+        ${pendingApprovals.length > 0 ? `
+        <div class="card section-gap" style="border-left:4px solid var(--amber-400)">
+            <div class="card-header">
+                <h3 class="card-title">⏳ Payments Awaiting Approval (${pendingApprovals.length})</h3>
+                <button class="btn btn-primary btn-sm" onclick="navigate('pendingApprovals')">View All</button>
+            </div>
+            <div class="card-body no-padding"><div class="table-wrapper">
+                <table class="data-table">
+                    <thead><tr><th>Member</th><th>Type</th><th>Amount</th><th>Due Date</th><th>Action</th></tr></thead>
+                    <tbody>
+                    ${pendingApprovals.slice(0,5).map(p=>`<tr>
+                        <td><b>${p.member_name}</b><br><small style="color:var(--gray-500)">${p.member_phone}</small></td>
+                        <td><span class="badge ${p.payment_type==='monthly_contribution'?'badge-info':'badge-warning'}">${p.payment_type==='monthly_contribution'?'Contribution':'EMI'}</span></td>
+                        <td class="cell-primary">${formatCurrency(p.amount)}</td>
+                        <td>${formatDate(p.due_date)}</td>
+                        <td><button class="btn btn-success btn-sm" onclick="handleApprovePayment(${p.id})">Approve</button></td>
+                    </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div></div>
+        </div>` : ''}
         
         <div class="card section-gap">
             <div class="card-header"><h3 class="card-title">🔍 Search Member</h3></div>
@@ -1360,7 +1385,7 @@ async function loadMonthlyPayments(monthYear) {
                         </thead>
                         <tbody>
                         ${data.payments.map(p => `<tr>
-                            <td>${formatDate(p.payment_date)}</td>
+                            <td>${p.payment_date ? formatDate(p.payment_date) : '<span class="badge badge-warning">Pending</span>'}</td>
                             <td class="cell-primary">${p.member_name}</td>
                             <td class="cell-mono">${p.member_phone}</td>
                             <td>${p.payment_type === 'monthly_contribution' 
@@ -1370,9 +1395,11 @@ async function loadMonthlyPayments(monthYear) {
                             <td>${p.penalty_amount > 0 ? formatCurrency(p.penalty_amount) : '—'}</td>
                             <td>${p.days_late > 0 ? p.days_late + ' days' : '—'}</td>
                             <td class="cell-mono" style="font-size:0.85rem;">${p.transaction_id || '—'}</td>
-                            <td>${p.payment_type === 'monthly_contribution' 
-                                ? `<button class="btn btn-danger btn-sm" onclick="handleDeleteContribution(${p.id},'${monthYear}')">Delete</button>` 
-                                : '—'}</td>
+                            <td>${p.approval_status === 'pending_approval' 
+                                ? `<button class="btn btn-success btn-sm" onclick="handleApprovePayment(${p.id})">Approve</button>` 
+                                : p.payment_type === 'monthly_contribution' 
+                                    ? `<button class="btn btn-danger btn-sm" onclick="handleDeleteContribution(${p.id},'${monthYear}')">Delete</button>` 
+                                    : '—'}</td>
                         </tr>`).join('')}
                         </tbody>
                         <tfoot>
@@ -1703,16 +1730,83 @@ async function renderUserDashboard() {
     } catch(e) { c.innerHTML = errorHTML(e.message); }
 }
 
+async function renderPendingApprovals() {
+    const c = $('contentArea');
+    try {
+        const items = await api.pendingApprovals();
+        if (!items.length) {
+            c.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">${ICONS.check}<h3>No Pending Approvals</h3><p>All payments have been reviewed.</p></div></div></div>`;
+            return;
+        }
+        c.innerHTML = `
+        <div class="card">
+            <div class="card-header"><h3 class="card-title">⏳ Pending Approvals (${items.length})</h3></div>
+            <div class="card-body no-padding"><div class="table-wrapper">
+                <table class="data-table">
+                    <thead><tr><th>Member</th><th>Phone</th><th>Type</th><th>Description</th><th>Amount</th><th>Due Date</th><th>Penalty</th><th>Transaction ID</th><th>Action</th></tr></thead>
+                    <tbody>
+                    ${items.map(p => `<tr>
+                        <td>${p.member_name}</td>
+                        <td>${p.member_phone}</td>
+                        <td><span class="badge ${p.payment_type === 'monthly_contribution' ? 'badge-info' : 'badge-warning'}">${p.payment_type === 'monthly_contribution' ? 'Contribution' : 'EMI'}</span></td>
+                        <td style="font-size:0.85rem">${p.description || '—'}</td>
+                        <td class="cell-primary">${formatCurrency(p.amount)}</td>
+                        <td>${formatDate(p.due_date)}</td>
+                        <td>${p.penalty_amount > 0 ? formatCurrency(p.penalty_amount) : '—'}</td>
+                        <td style="font-size:0.8rem;color:var(--gray-500)">${p.transaction_id || '—'}</td>
+                        <td><button class="btn btn-success btn-sm" onclick="handleApprovePayment(${p.id})">Approve</button></td>
+                    </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div></div>
+        </div>`;
+    } catch(e) { c.innerHTML = errorHTML(e.message); }
+}
+
+async function handleApprovePayment(paymentId) {
+    if (!confirm('Approve this payment?')) return;
+    try {
+        const r = await api.approvePayment(paymentId);
+        showToast(`Payment approved for member #${r.member_id}`, 'success');
+        if (state.view === 'pendingApprovals') {
+            renderPendingApprovals();
+        } else if (state.view === 'dashboard') {
+            renderAdminDashboard();
+        } else {
+            // Refresh monthly payments if open
+            const monthInput = $('monthYearInput');
+            if (monthInput) loadMonthlyPayments(monthInput.value);
+        }
+    } catch(err) { showToast(err.message, 'error'); }
+}
+
 async function renderMyInstallments() {
     const c = $('contentArea');
     try {
         const data = await api.myInstallments();
+        const awaitingCount = data.awaiting_approval_count || 0;
+        const awaitingItems = data.awaiting_approval_installments || [];
         c.innerHTML = `
         <div class="stats-grid">
             ${statCard(t('installments.total'), data.total_installments, t('installments.installments'), 'purple', ICONS.installments)}
             ${statCard(t('installments.pending'), data.pending_count, t('installments.to_pay'), 'amber', ICONS.clock)}
+            ${awaitingCount > 0 ? statCard('Awaiting Approval', awaitingCount, 'Submitted, pending admin', 'amber', ICONS.alert) : ''}
             ${statCard(t('installments.paid'), data.paid_count, t('installments.completed'), 'green', ICONS.check)}
         </div>
+        ${awaitingItems.length > 0 ? `
+        <div class="card section-gap" style="border-left:4px solid var(--amber-400)">
+            <div class="card-header"><h3 class="card-title">⏳ Awaiting Admin Approval (${awaitingCount})</h3></div>
+            <div class="card-body no-padding"><div class="table-wrapper">
+                <table class="data-table"><thead><tr><th>${t('table.description')}</th><th>${t('table.amount')}</th><th>${t('table.due_date')}</th><th>Status</th></tr></thead><tbody>
+                ${awaitingItems.map(i=>`<tr>
+                    <td>${i.description||t('installments.loan_installment')}</td>
+                    <td class="cell-primary">${formatCurrency(i.total_pending_amount)}</td>
+                    <td>${formatDate(i.due_date)}</td>
+                    <td><span class="badge badge-warning"><span class="badge-dot"></span>Awaiting Approval</span></td>
+                </tr>`).join('')}
+                </tbody></table>
+            </div></div>
+        </div>` : ''}
         ${data.pending_installments.length > 0 ? `
         <div class="card section-gap"><div class="card-header"><h3 class="card-title">${t('installments.pending_title')} (${data.pending_count})</h3></div>
         <div class="card-body no-padding"><div class="table-wrapper">
@@ -1724,7 +1818,7 @@ async function renderMyInstallments() {
                 <td><button class="btn btn-success btn-sm" onclick="showPayInstallmentModal(${i.id}, ${i.total_pending_amount})">${t('installments.pay_now')}</button></td>
             </tr>`).join('')}
             </tbody></table>
-        </div></div></div>` : '<div class="card section-gap"><div class="card-body"><div class="empty-state">' + ICONS.check + '<h3>' + t('installments.no_pending') + '</h3><p>' + t('installments.all_paid') + '</p></div></div></div>'}
+        </div></div></div>` : (!awaitingItems.length ? '<div class="card section-gap"><div class="card-body"><div class="empty-state">' + ICONS.check + '<h3>' + t('installments.no_pending') + '</h3><p>' + t('installments.all_paid') + '</p></div></div></div>' : '')}
         ${data.paid_installments.length > 0 ? `
         <div class="card"><div class="card-header"><h3 class="card-title">${t('installments.paid_title')} (${data.paid_count})</h3></div>
         <div class="card-body no-padding"><div class="table-wrapper">
@@ -1757,13 +1851,18 @@ function showPayInstallmentModal(id, amount) {
         e.preventDefault();
         try {
             const r = await api.payInstallment(id, $('instTxn').value.trim());
-            showToast(t('pay_inst.success'),'success'); closeModal();
-            openModal(t('pay_inst.success_title'), `<div class="info-grid">
-                <div class="info-item"><div class="info-label">${t('common.amount')}</div><div class="info-value">${formatCurrency(r.amount_paid)}</div></div>
-                <div class="info-item"><div class="info-label">${t('common.penalty')}</div><div class="info-value">${formatCurrency(r.penalty_amount)}</div></div>
-                <div class="info-item"><div class="info-label">${t('common.total_paid')}</div><div class="info-value">${formatCurrency(r.total_paid)}</div></div>
-                <div class="info-item"><div class="info-label">${t('common.date')}</div><div class="info-value">${formatDate(r.payment_date)}</div></div>
-            </div>`);
+            showToast('Installment submitted — awaiting admin approval','success'); closeModal();
+            openModal('Submission Received', `
+                <div style="background:var(--amber-50);padding:12px;border-radius:var(--radius-sm);margin-bottom:16px;border:1px solid var(--amber-200)">
+                    <strong>⏳ Awaiting Admin Approval</strong><br>
+                    <span style="font-size:0.85rem;color:var(--gray-600)">Your payment has been submitted and will be confirmed by the admin.</span>
+                </div>
+                <div class="info-grid">
+                    <div class="info-item"><div class="info-label">${t('common.amount')}</div><div class="info-value">${formatCurrency(r.amount_paid)}</div></div>
+                    <div class="info-item"><div class="info-label">${t('common.penalty')}</div><div class="info-value">${formatCurrency(r.penalty_amount)}</div></div>
+                    <div class="info-item"><div class="info-label">Transaction ID</div><div class="info-value">${r.transaction_id}</div></div>
+                    <div class="info-item"><div class="info-label">Status</div><div class="info-value"><span class="badge badge-warning">Awaiting Approval</span></div></div>
+                </div>`);
             renderMyInstallments();
         } catch(err) { showToast(err.message,'error'); }
     });
@@ -1965,13 +2064,17 @@ function renderPayContribution() {
             e.preventDefault();
             try {
                 const r = await api.payContribution($('contribTxn').value.trim());
-                showToast(t('contrib.success'),'success');
-                openModal(t('contrib.success_title'), `
+                showToast('Contribution submitted — awaiting admin approval', 'success');
+                openModal('Submission Received', `
+                    <div style="background:var(--amber-50);padding:12px;border-radius:var(--radius-sm);margin-bottom:16px;border:1px solid var(--amber-200)">
+                        <strong>⏳ Awaiting Admin Approval</strong><br>
+                        <span style="font-size:0.85rem;color:var(--gray-600)">Your payment has been submitted and will be confirmed by the admin.</span>
+                    </div>
                     <div class="info-grid">
                         <div class="info-item"><div class="info-label">${t('common.amount')}</div><div class="info-value">${formatCurrency(r.contribution_amount)}</div></div>
                         <div class="info-item"><div class="info-label">${t('common.penalty')}</div><div class="info-value">${formatCurrency(r.penalty_amount)}</div></div>
-                        <div class="info-item"><div class="info-label">${t('common.total_paid')}</div><div class="info-value">${formatCurrency(r.total_paid)}</div></div>
-                        <div class="info-item"><div class="info-label">${t('common.date')}</div><div class="info-value">${formatDate(r.payment_date)}</div></div>
+                        <div class="info-item"><div class="info-label">Transaction ID</div><div class="info-value">${r.transaction_id}</div></div>
+                        <div class="info-item"><div class="info-label">Status</div><div class="info-value"><span class="badge badge-warning">Awaiting Approval</span></div></div>
                     </div>`);
                 $('contribForm').reset();
             } catch(err) { showToast(err.message,'error'); }
