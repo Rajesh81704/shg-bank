@@ -451,11 +451,10 @@ def get_all_installments(db: Session, member_id: int):
 
 def get_member_earnings(db: Session, member_id: int, month_year: str = None):
     """
-    Calculate member's share of earnings from interest and penalties
-    If month_year is provided (YYYY-MM), calculate for that specific month only
-    Otherwise, calculate all-time earnings
+    Calculate member's share of earnings from interest and penalties.
+    Interest per installment = total_payment - principal = stored in (total_loan_amount/installments gives principal,
+    but we recalculate properly using reducing balance).
     """
-    # Parse month_year if provided
     year_filter = None
     month_filter = None
     if month_year:
@@ -467,127 +466,102 @@ def get_member_earnings(db: Session, member_id: int, month_year: str = None):
                 raise ValueError("Month must be between 1 and 12")
         except (ValueError, AttributeError):
             raise ValueError("Invalid month_year format. Use YYYY-MM (e.g., 2026-03)")
-    
+
     result = db.execute(
-        text("""
-            SELECT COUNT(*) FROM users WHERE is_active = true AND is_admin = false
-        """)
+        text("SELECT COUNT(*) FROM users WHERE is_active = true AND is_admin = false")
     )
     total_members = result.fetchone()[0]
 
     if total_members == 0:
         raise ValueError("No active members found")
 
-    # Build date filter for queries
-    date_filter = ""
-    date_params = {}
-    if month_year:
-        date_filter = " AND EXTRACT(YEAR FROM payment_date) = :year AND EXTRACT(MONTH FROM payment_date) = :month"
-        date_params = {"year": year_filter, "month": month_filter}
+    # Get all approved loans
+    loans = db.execute(
+        text("SELECT id, amount, interest_rate, installments FROM loans WHERE status = 'approved'")
+    ).fetchall()
 
-    result = db.execute(
-        text("""
-            SELECT id, amount, interest_rate, installments
-            FROM loans
-            WHERE status = 'approved'
-        """)
-    )
-    loans = result.fetchall()
-
-    total_interest_earned = 0
+    total_interest_earned = 0.0
 
     for loan in loans:
         loan_id, amount, interest_rate, installments = loan
+        monthly_rate = interest_rate / 100
+        principal_per_month = amount / installments
 
-        query = f"""
-            SELECT COUNT(*)
-            FROM payments
-            WHERE payment_type = 'loan_installment'
-            AND description LIKE :pattern
-            AND payment_date IS NOT NULL
-            {date_filter}
-        """
-        
-        params = {"pattern": f"Loan #{loan_id} -%"}
-        params.update(date_params)
-        
-        result = db.execute(text(query), params)
-        paid_count = result.fetchone()[0]
+        # Get all paid installments for this loan ordered by due_date
+        # so we can apply reducing balance correctly
+        if month_year:
+            # Only installments paid in the given month
+            paid_rows = db.execute(text("""
+                SELECT due_date, ROW_NUMBER() OVER (ORDER BY due_date ASC) as inst_num
+                FROM payments
+                WHERE payment_type = 'loan_installment'
+                AND description LIKE :pattern
+                AND payment_date IS NOT NULL
+                AND EXTRACT(YEAR FROM payment_date) = :year
+                AND EXTRACT(MONTH FROM payment_date) = :month
+                ORDER BY due_date ASC
+            """), {"pattern": f"Loan #{loan_id} -%", "year": year_filter, "month": month_filter}).fetchall()
 
-        if paid_count > 0:
-            monthly_interest_rate = interest_rate / 100
-            principal_per_month = amount / installments
-            remaining_balance = amount
-
-            # If filtering by month, we need to calculate which installments were paid in that month
-            if month_year:
-                # Get the actual paid installments for this loan in the specified month
-                query = f"""
-                    SELECT total_loan_amount, total_pending_amount
-                    FROM payments
+            # For each paid installment in this month, get its position in the full schedule
+            for row in paid_rows:
+                # Count how many installments came before this due_date
+                pos = db.execute(text("""
+                    SELECT COUNT(*) FROM payments
                     WHERE payment_type = 'loan_installment'
                     AND description LIKE :pattern
-                    AND payment_date IS NOT NULL
-                    {date_filter}
-                    ORDER BY due_date ASC
-                """
-                result = db.execute(text(query), params)
-                paid_installments = result.fetchall()
-                
-                for inst in paid_installments:
-                    # Calculate interest for this specific installment
-                    # We need to determine which month number this is
-                    query_month_num = f"""
-                        SELECT COUNT(*) + 1
-                        FROM payments p1
-                        WHERE p1.payment_type = 'loan_installment'
-                        AND p1.description LIKE :pattern
-                        AND p1.due_date < (
-                            SELECT p2.due_date FROM payments p2 
-                            WHERE p2.payment_type = 'loan_installment'
-                            AND p2.description LIKE :pattern
-                            AND p2.payment_date IS NOT NULL
-                            {date_filter}
-                            LIMIT 1
-                        )
-                    """
-                    # Simplified: just use the interest from the amount
-                    amount_paid = inst[0] if inst[0] else inst[1]
-                    # Rough estimate: interest is about (amount_paid - principal_per_month)
-                    interest_for_month = max(0, amount_paid - principal_per_month)
-                    total_interest_earned += interest_for_month
-            else:
-                # All-time calculation
-                for month in range(1, paid_count + 1):
-                    interest_for_month = remaining_balance * monthly_interest_rate
-                    total_interest_earned += interest_for_month
-                    remaining_balance -= principal_per_month
+                    AND due_date <= :due_date
+                """), {"pattern": f"Loan #{loan_id} -%", "due_date": row[0]}).fetchone()[0]
+                # pos is 1-based index of this installment
+                remaining = amount - (principal_per_month * (pos - 1))
+                total_interest_earned += remaining * monthly_rate
+        else:
+            # All-time: sum interest for all paid installments
+            paid_rows = db.execute(text("""
+                SELECT due_date FROM payments
+                WHERE payment_type = 'loan_installment'
+                AND description LIKE :pattern
+                AND payment_date IS NOT NULL
+                ORDER BY due_date ASC
+            """), {"pattern": f"Loan #{loan_id} -%"}).fetchall()
 
-    # Get total penalties with date filter
-    penalty_query = f"""
-        SELECT COALESCE(SUM(penalty_amount), 0) as total_penalties
-        FROM payments
-        WHERE payment_date IS NOT NULL AND penalty_amount > 0
-        {date_filter}
-    """
-    result = db.execute(text(penalty_query), date_params)
-    total_penalties = result.fetchone()[0]
+            remaining_balance = amount
+            for _ in paid_rows:
+                total_interest_earned += remaining_balance * monthly_rate
+                remaining_balance -= principal_per_month
 
-    interest_per_member = total_interest_earned / total_members if total_members > 0 else 0
-    penalty_per_member = total_penalties / total_members if total_members > 0 else 0
+    # Total penalties collected
+    if month_year:
+        penalty_result = db.execute(text("""
+            SELECT COALESCE(SUM(penalty_amount), 0) FROM payments
+            WHERE payment_date IS NOT NULL AND penalty_amount > 0
+            AND EXTRACT(YEAR FROM payment_date) = :year
+            AND EXTRACT(MONTH FROM payment_date) = :month
+        """), {"year": year_filter, "month": month_filter}).fetchone()
+    else:
+        penalty_result = db.execute(text("""
+            SELECT COALESCE(SUM(penalty_amount), 0) FROM payments
+            WHERE payment_date IS NOT NULL AND penalty_amount > 0
+        """)).fetchone()
+
+    total_penalties = float(penalty_result[0])
+
+    interest_per_member = total_interest_earned / total_members
+    penalty_per_member = total_penalties / total_members
     total_earning_per_member = interest_per_member + penalty_per_member
 
-    # Get member's penalty paid with date filter
-    member_penalty_query = f"""
-        SELECT COALESCE(SUM(penalty_amount), 0) as my_penalties
-        FROM payments
-        WHERE member_id = :member_id AND payment_date IS NOT NULL
-        {date_filter}
-    """
-    params = {"member_id": member_id}
-    params.update(date_params)
-    result = db.execute(text(member_penalty_query), params)
-    member_penalty_paid = result.fetchone()[0]
+    # Member's own penalty paid
+    if month_year:
+        my_penalty = db.execute(text("""
+            SELECT COALESCE(SUM(penalty_amount), 0) FROM payments
+            WHERE member_id = :member_id AND payment_date IS NOT NULL
+            AND EXTRACT(YEAR FROM payment_date) = :year
+            AND EXTRACT(MONTH FROM payment_date) = :month
+        """), {"member_id": member_id, "year": year_filter, "month": month_filter}).fetchone()[0]
+    else:
+        my_penalty = db.execute(text("""
+            SELECT COALESCE(SUM(penalty_amount), 0) FROM payments
+            WHERE member_id = :member_id AND payment_date IS NOT NULL
+        """), {"member_id": member_id}).fetchone()[0]
 
     return {
         "member_id": member_id,
@@ -604,7 +578,7 @@ def get_member_earnings(db: Session, member_id: int, month_year: str = None):
             "grand_total": round(total_interest_earned + total_penalties, 2)
         },
         "member_contribution": {
-            "penalty_paid_by_me": round(member_penalty_paid, 2)
+            "penalty_paid_by_me": round(float(my_penalty), 2)
         }
     }
 
@@ -709,4 +683,98 @@ def check_current_month_emi_status(db: Session, member_id: int):
         "total_pending_emis": len(pending_emis),
         "total_penalty": total_penalty,
         "emis": alerts
+    }
+
+
+def get_my_payment_history(db: Session, member_id: int):
+    """Get all payments for a member grouped by month-year"""
+    rows = db.execute(
+        text("""
+            SELECT
+                id, payment_type, total_loan_amount, total_pending_amount,
+                description, payment_date, due_date, transaction_id,
+                days_late, penalty_amount, approval_status
+            FROM payments
+            WHERE member_id = :member_id
+            ORDER BY due_date DESC, payment_date DESC
+        """),
+        {"member_id": member_id}
+    ).fetchall()
+
+    months = {}
+
+    for r in rows:
+        approval_status = r[10]
+        payment_date = r[5]
+        due_date = r[6]
+
+        # Determine status
+        if approval_status == 'pending_approval':
+            status = 'awaiting_approval'
+        elif payment_date:
+            status = 'paid'
+        else:
+            status = 'pending'
+
+        # Use due_date for grouping (consistent month key)
+        ref_date = due_date or payment_date
+        if not ref_date:
+            continue
+        month_key = ref_date.strftime("%Y-%m")
+        month_label = ref_date.strftime("%B %Y")
+
+        if month_key not in months:
+            months[month_key] = {
+                "month_year": month_key,
+                "month_label": month_label,
+                "payments": [],
+                "total_contribution": 0.0,
+                "total_emi": 0.0,
+                "total_penalty": 0.0,
+                "total": 0.0,
+            }
+
+        amount = float(r[2] or r[3] or 0)
+        penalty = float(r[9] or 0)
+
+        entry = {
+            "id": r[0],
+            "payment_type": r[1],
+            "amount": amount,
+            "description": r[4],
+            "payment_date": payment_date.strftime("%Y-%m-%d") if payment_date else None,
+            "due_date": due_date.strftime("%Y-%m-%d") if due_date else None,
+            "transaction_id": r[7],
+            "days_late": r[8] or 0,
+            "penalty_amount": penalty,
+            "status": status,
+        }
+
+        months[month_key]["payments"].append(entry)
+
+        if r[1] == "monthly_contribution":
+            months[month_key]["total_contribution"] += amount
+        elif r[1] == "loan_installment":
+            months[month_key]["total_emi"] += amount
+
+        months[month_key]["total_penalty"] += penalty
+        months[month_key]["total"] += amount + penalty
+
+    # Sort months descending
+    sorted_months = sorted(months.values(), key=lambda x: x["month_year"], reverse=True)
+
+    grand_total_contribution = sum(m["total_contribution"] for m in sorted_months)
+    grand_total_emi = sum(m["total_emi"] for m in sorted_months)
+    grand_total_penalty = sum(m["total_penalty"] for m in sorted_months)
+    grand_total = sum(m["total"] for m in sorted_months)
+
+    return {
+        "member_id": member_id,
+        "months": sorted_months,
+        "grand_total": {
+            "total_contribution": round(grand_total_contribution, 2),
+            "total_emi": round(grand_total_emi, 2),
+            "total_penalty": round(grand_total_penalty, 2),
+            "total": round(grand_total, 2),
+        }
     }

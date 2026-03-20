@@ -150,6 +150,7 @@ const api = {
     payInstallment: (id, txn) => apiFetch(`${API}/user/pay_loan_installment/${id}?payment_transaction_id=${txn}`, { method:'POST' }),
     myInstallments: () => apiFetch(`${API}/user/my_installments`),
     myEarnings: () => apiFetch(`${API}/user/my_earnings`),
+    myPaymentHistory: () => apiFetch(`${API}/user/my_payment_history`),
     // Admin endpoints
     createUser: d => apiFetch('/create-user', { method:'POST', json:d }),
     emergencyAdmin: d => apiFetch('/emergency-admin', { method:'POST', json:d }),
@@ -207,6 +208,7 @@ const adminNav = [
 const userNav = [
     { id:'dashboard', labelKey:'nav.dashboard', icon:'dashboard' },
     { id:'myInstallments', labelKey:'nav.my_installments', icon:'installments' },
+    { id:'myPaymentHistory', labelKey:'nav.my_payments', icon:'payments' },
     { id:'applyLoan', labelKey:'nav.apply_loan', icon:'apply' },
     { id:'calculator', labelKey:'nav.emi_calculator', icon:'calculator' },
     { id:'payContribution', labelKey:'nav.pay_contribution', icon:'contribution' },
@@ -311,7 +313,7 @@ function navigate(view, data) {
         financialSummary:'page.financial_summary', myInstallments:'page.my_installments', applyLoan:'page.apply_loan',
         calculator:'page.emi_calculator', payContribution:'page.pay_contribution', memberDetail:'page.member_details',
         myEarnings:'page.my_earnings', createLoan:'page.create_loan', monthlyPayments:'page.monthly_payments',
-        pendingApprovals:'Payment Installments' };
+        pendingApprovals:'Payment Installments', myPaymentHistory:'My Payments' };
     $('pageTitle').textContent = t(titleKeys[view] || 'page.dashboard');
         const name = state.user ? (state.user.name || state.user.username) : '';
     const hour = new Date().getHours();
@@ -341,6 +343,7 @@ function navigate(view, data) {
         myInstallments: renderMyInstallments, applyLoan: renderApplyLoan,
         calculator: renderCalculator, payContribution: renderPayContribution,
         memberDetail: () => renderMemberDetail(data), myEarnings: renderMyEarnings,
+        myPaymentHistory: renderMyPaymentHistory,
     };
     (views[view] || views.dashboard)();
 }
@@ -1905,6 +1908,58 @@ async function renderMyEarnings() {
             </div>
         </div></div>`;
     } catch(err) { c.innerHTML = errorHTML(err.message); }
+}
+
+async function renderMyPaymentHistory() {
+    const c = $('contentArea');
+    try {
+        const data = await api.myPaymentHistory();
+        const g = data.grand_total;
+        const statusBadgeLocal = s => {
+            if (s === 'paid') return '<span class="badge badge-success"><span class="badge-dot"></span>Paid</span>';
+            if (s === 'awaiting_approval') return '<span class="badge badge-warning"><span class="badge-dot"></span>Awaiting Approval</span>';
+            return '<span class="badge badge-neutral"><span class="badge-dot"></span>Pending</span>';
+        };
+
+        c.innerHTML = `
+        <div class="stats-grid">
+            ${statCard('Total Contribution', formatCurrency(g.total_contribution), 'Monthly contributions', 'purple', ICONS.contribution)}
+            ${statCard('Total EMI', formatCurrency(g.total_emi), 'Loan installments', 'green', ICONS.installments)}
+            ${statCard('Total Penalty', formatCurrency(g.total_penalty), 'Late payment penalties', 'red', ICONS.alert)}
+            ${statCard('Grand Total', formatCurrency(g.total), 'All payments combined', 'blue', ICONS.wallet)}
+        </div>
+        ${data.months.length === 0 ? `<div class="card"><div class="card-body"><div class="empty-state">${ICONS.payments}<h3>No payments yet</h3></div></div></div>` :
+        data.months.map(m => `
+        <div class="card section-gap">
+            <div class="card-header">
+                <h3 class="card-title">📅 ${m.month_label}</h3>
+                <div style="display:flex;gap:12px;font-size:0.85rem;color:var(--gray-600)">
+                    ${m.total_contribution > 0 ? `<span>Contribution: <b>${formatCurrency(m.total_contribution)}</b></span>` : ''}
+                    ${m.total_emi > 0 ? `<span>EMI: <b>${formatCurrency(m.total_emi)}</b></span>` : ''}
+                    ${m.total_penalty > 0 ? `<span style="color:var(--red-500)">Penalty: <b>${formatCurrency(m.total_penalty)}</b></span>` : ''}
+                    <span style="font-weight:700;color:var(--purple-600)">Total: ${formatCurrency(m.total)}</span>
+                </div>
+            </div>
+            <div class="card-body no-padding"><div class="table-wrapper">
+                <table class="data-table">
+                    <thead><tr><th>Type</th><th>Description</th><th>Amount</th><th>Penalty</th><th>Due Date</th><th>Paid On</th><th>Status</th></tr></thead>
+                    <tbody>
+                    ${m.payments.map(p => `<tr>
+                        <td>${p.payment_type === 'monthly_contribution'
+                            ? '<span class="badge badge-info">Contribution</span>'
+                            : '<span class="badge badge-neutral">EMI</span>'}</td>
+                        <td style="font-size:0.85rem">${p.description || '—'}</td>
+                        <td class="cell-primary">${formatCurrency(p.amount)}</td>
+                        <td>${p.penalty_amount > 0 ? formatCurrency(p.penalty_amount) : '—'}</td>
+                        <td>${formatDate(p.due_date)}</td>
+                        <td>${p.payment_date ? formatDate(p.payment_date) : '—'}</td>
+                        <td>${statusBadgeLocal(p.status)}</td>
+                    </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div></div>
+        </div>`).join('')}`;
+    } catch(e) { c.innerHTML = errorHTML(e.message); }
 }
 
 function renderApplyLoan() {

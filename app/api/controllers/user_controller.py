@@ -13,7 +13,8 @@ from app.api.services.loan_service import (
     process_monthly_contribution,
     pay_loan_installment as pay_installment_service,
     get_all_installments,
-    get_member_earnings
+    get_member_earnings,
+    get_my_payment_history
 )
 from app.api.middleware.auth_middleware import get_current_user
 
@@ -127,3 +128,12 @@ async def get_emi_alert(
     from app.api.services.loan_service import check_current_month_emi_status
     result = check_current_month_emi_status(db, current_user["id"])
     return result
+
+
+@router.get("/my_payment_history")
+async def get_my_payment_history_endpoint(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get all payments grouped by month-year with totals"""
+    return get_my_payment_history(db, current_user["id"])

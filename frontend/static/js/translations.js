@@ -27,6 +27,7 @@ const translations = {
         'nav.all_loans': 'All Loans',
         'nav.create_loan': 'Create Loan',
         'nav.monthly_payments': 'Monthly Payments',
+        'nav.my_payments': 'My Payments',
         'pending_approvals': 'Payment Installments',
         'nav.financial_summary': 'Financial Summary',
         'nav.emi_calculator': 'EMI Calculator',
